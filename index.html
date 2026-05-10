@@ -44,13 +44,55 @@
   .header {
     background: var(--primary);
     color: #fff;
-    padding: 52px 20px 20px;
+    padding: 52px 20px 16px;
     position: sticky;
     top: 0;
     z-index: 100;
   }
+  .header-top { display: flex; align-items: center; justify-content: space-between; }
   .header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
   .header p { font-size: 13px; opacity: 0.75; margin-top: 2px; }
+  .header-backup-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px; padding-top: 10px;
+    border-top: 1px solid rgba(255,255,255,0.15);
+  }
+  .backup-info { font-size: 11px; opacity: 0.7; }
+  .backup-info span { font-weight: 700; opacity: 1; }
+  .btn-backup-header {
+    background: rgba(255,255,255,0.18);
+    border: 1.5px solid rgba(255,255,255,0.35);
+    color: #fff;
+    border-radius: 10px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn-backup-header:active { transform: scale(0.95); background: rgba(255,255,255,0.28); }
+  .backup-remind-banner {
+    background: #fff3cd;
+    color: #856404;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .backup-remind-banner button {
+    background: #856404;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
 
   /* NAV */
   .nav {
@@ -684,8 +726,16 @@
 
 <!-- HEADER -->
 <div class="header">
-  <h1>💼 Ücret Takip</h1>
-  <p id="header-date">Yükleniyor...</p>
+  <div class="header-top">
+    <div>
+      <h1>💼 Ücret Takip</h1>
+      <p id="header-date">Yükleniyor...</p>
+    </div>
+  </div>
+  <div class="header-backup-row">
+    <div class="backup-info">🗄️ Son yedek: <span id="header-last-backup">Hiç alınmadı</span></div>
+    <button class="btn-backup-header" onclick="exportData()">⬇️ Yedekle</button>
+  </div>
 </div>
 
 <!-- PAGE: ANA SAYFA -->
@@ -778,6 +828,26 @@
     <div style="margin-top:14px">
       <button class="btn btn-primary" onclick="saveSettings()">💾 Ayarları Kaydet</button>
     </div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <div class="card-title">📦 Yedekleme</div>
+    <div class="setting-row" style="border:none;padding-bottom:0">
+      <div>
+        <div class="setting-label">Dışa Aktar</div>
+        <div class="setting-sub">Verileri JSON olarak indir</div>
+      </div>
+      <button class="btn btn-sm btn-green" onclick="exportData()">⬇️ İndir</button>
+    </div>
+    <div class="setting-row" style="border:none;padding-top:10px;padding-bottom:0">
+      <div>
+        <div class="setting-label">İçe Aktar</div>
+        <div class="setting-sub">JSON dosyasından geri yükle</div>
+      </div>
+      <button class="btn btn-sm" onclick="document.getElementById('import-file').click()" style="background:var(--accent-blue-bg);color:var(--accent-blue);border:1.5px solid var(--accent-blue)">⬆️ Yükle</button>
+    </div>
+    <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">
+    <div id="backup-msg" style="margin-top:10px;font-size:13px;font-weight:600;min-height:18px;text-align:center"></div>
   </div>
 
   <div class="card" style="margin-top:12px">
@@ -907,6 +977,10 @@ function load() {
 function save() {
   localStorage.setItem('ucret_settings', JSON.stringify(settings));
   localStorage.setItem('ucret_entries', JSON.stringify(entries));
+  // Her kayıtta localStorage'a otomatik yedek yaz
+  const backup = { version: 1, backupDate: new Date().toISOString(), settings, entries };
+  localStorage.setItem('ucret_auto_backup', JSON.stringify(backup));
+  updateHeaderBackup();
 }
 
 // === FORMAT ===
@@ -1055,6 +1129,23 @@ function renderHome() {
   const net = totalIncome - totalExpense;
 
   let html = '';
+
+  // Yedek hatırlatma banner
+  const lastBackup = localStorage.getItem('ucret_last_backup');
+  if (lastBackup) {
+    const daysSince = Math.floor((Date.now() - parseInt(lastBackup)) / 86400000);
+    if (daysSince >= 3) {
+      html += `<div class="backup-remind-banner">
+        ⚠️ ${daysSince} gündür yedek almadınız!
+        <button onclick="exportData()">⬇️ Şimdi Yedekle</button>
+      </div>`;
+    }
+  } else {
+    html += `<div class="backup-remind-banner">
+      💾 Henüz hiç yedek almadınız!
+      <button onclick="exportData()">⬇️ Yedekle</button>
+    </div>`;
+  }
 
   // Net balance banner
   html += `<div class="net-balance ${net >= 0 ? 'net-positive' : 'net-negative'}">
@@ -1579,6 +1670,72 @@ function handlePinComplete() {
   }
 }
 
+// === YEDEKLEME ===
+function exportData() {
+  const data = {
+    version: 1,
+    exportDate: new Date().toISOString(),
+    settings,
+    entries
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const tarih = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = `ucret_takip_yedek_${tarih}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  // Son yedek tarihini kaydet
+  localStorage.setItem('ucret_last_backup', Date.now().toString());
+  updateHeaderBackup();
+  showBackupMsg('✅ Yedek indirildi!', 'var(--accent-green)');
+  renderHome(); // banner'ı kaldır
+}
+
+function updateHeaderBackup() {
+  const el = document.getElementById('header-last-backup');
+  if (!el) return;
+  const ts = localStorage.getItem('ucret_last_backup');
+  if (!ts) { el.textContent = 'Hiç alınmadı'; return; }
+  const daysSince = Math.floor((Date.now() - parseInt(ts)) / 86400000);
+  if (daysSince === 0) el.textContent = 'Bugün';
+  else if (daysSince === 1) el.textContent = 'Dün';
+  else el.textContent = daysSince + ' gün önce';
+}
+
+function importData(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.entries || !data.settings) throw new Error('Geçersiz dosya');
+      if (!confirm(`${data.entries.length} kayıt bulundu. Mevcut verilerın üzerine yüklensin mi?`)) return;
+      settings = data.settings;
+      entries = data.entries;
+      save();
+      renderHome();
+      initSettings();
+      showBackupMsg('✅ Veriler yüklendi!', 'var(--accent-green)');
+    } catch(err) {
+      showBackupMsg('❌ Geçersiz yedek dosyası', 'var(--accent-red)');
+    }
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+function showBackupMsg(msg, color) {
+  const el = document.getElementById('backup-msg');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = color;
+  setTimeout(() => { el.textContent = ''; }, 3000);
+}
+
 // === SETTINGS ===
 function initSettings() {
   document.getElementById('daily-rate-input').value = settings.dailyRate || '';
@@ -1619,6 +1776,7 @@ function updateHeaderDate() {
 // === INIT ===
 load();
 updateHeaderDate();
+updateHeaderBackup();
 initAddForm();
 renderHome();
 </script>
