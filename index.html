@@ -1157,16 +1157,12 @@ function saveEntry() {
   if (currentEntryType === 'income') {
     entry.jobType = currentJobType;
     if (currentJobType === 'daily') {
-      if (!settings.dailyRate || settings.dailyRate <= 0) {
-        alert('Lütfen önce Ayarlar\'dan günlük ücretinizi girin!');
-        showPage('settings');
-        return;
-      }
-      entry.amount = settings.dailyRate;
+      entry.amount = settings.dailyRate || 0;
       entry.desc = document.getElementById('income-desc').value || 'Günlük İş';
     } else {
-      const amt = parseFloat(document.getElementById('special-amount').value);
-      if (!amt || amt <= 0) { alert('Lütfen geçerli bir tutar girin.'); return; }
+      const rawAmt = document.getElementById('special-amount').value;
+      const amt = parseFloat(rawAmt);
+      if (rawAmt === '' || isNaN(amt) || amt < 0) { alert('Lütfen geçerli bir tutar girin.'); return; }
       entry.amount = amt;
       entry.desc = document.getElementById('income-desc').value || 'Özel İş';
     }
@@ -1419,7 +1415,7 @@ function renderEntryItemHome(e, showDate=false) {
     icon = '🔄'; iconClass = 'icon-daily'; amtColor = 'stat-green'; sign = '+';
     badgeHtml = '<span class="badge badge-daily">Günlük</span>';
   } else {
-    icon = '⭐'; iconClass = 'icon-special'; amtColor = 'stat-amber'; sign = '+';
+    icon = '⭐'; iconClass = 'icon-special'; amtColor = 'stat-green'; sign = '+';
     badgeHtml = '<span class="badge badge-special">Özel</span>';
   }
   const paidBadge = e.type === 'income'
@@ -1702,7 +1698,7 @@ function renderEntryItemEditable(e, showDate) {
   } else if (e.jobType === 'daily') {
     icon = '🔄'; iconClass = 'icon-daily'; amtColor = 'stat-green'; sign = '+';
   } else {
-    icon = '⭐'; iconClass = 'icon-special'; amtColor = 'stat-amber'; sign = '+';
+    icon = '⭐'; iconClass = 'icon-special'; amtColor = 'stat-green'; sign = '+';
   }
   const catLabels = {malzeme:'Malzeme',ulasim:'Ulaşım',yemek:'Yemek',ekipman:'Ekipman',diger:'Diğer'};
   const mesaiTypeLabels = {normal:'Normal',hafta:'Hafta Sonu',gece:'Gece'};
