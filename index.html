@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Ücret Takip">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <title>Ücret Takip</title>
 <style>
   :root {
@@ -955,6 +956,23 @@
   </div>
 
   <div class="card" style="margin-top:12px">
+    <div class="card-title">📂 Otomatik Klasör Kaydı</div>
+    <p style="font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:12px">
+      Bir klasör seçin — her yeni kayıt eklendiğinde veriler otomatik olarak o klasöre <strong>ucret_takip_veriler.json</strong> adıyla kaydedilir.
+    </p>
+    <div id="folder-status-text" style="font-size:13px;margin-bottom:12px;padding:10px 12px;background:var(--bg);border-radius:9px;border:1.5px solid var(--border)">
+      Klasör seçilmedi
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <button class="btn btn-primary" onclick="selectSaveFolder()" style="font-size:14px;padding:12px">📂 Klasör Seç</button>
+      <button class="btn" onclick="clearSaveFolder()" style="font-size:14px;padding:12px;background:var(--accent-red-bg);color:var(--accent-red);border:1.5px solid var(--accent-red)">✕ Kaldır</button>
+    </div>
+    <p style="font-size:11px;color:var(--text-muted);margin-top:10px;line-height:1.5">
+      ⚠️ Chrome / Edge masaüstünde çalışır. Safari ve Firefox'ta klasör yazma desteklenmez, normal indirme kullanılır.
+    </p>
+  </div>
+
+  <div class="card" style="margin-top:12px">
     <div class="card-title">📦 Yedekleme</div>
     <div class="setting-row" style="border:none;padding-bottom:0">
       <div>
@@ -1148,17 +1166,17 @@ function pdfSelectMode(mode) {
       <input type="date" id="pdf-gun-date" value="${today}">
     `;
   } else if (mode === 'haftalik') {
-    // Son 12 haftanın listesi
+    // Son 12 haftanın listesi — Cuma başlangıçlı
     const weeks = [];
     for (let w = 0; w < 12; w++) {
       const ref = new Date(); ref.setDate(ref.getDate() - w * 7);
       const day = ref.getDay();
-      const diffToSat = (day === 6) ? 0 : -(day + 1);
-      const sat = new Date(ref); sat.setDate(ref.getDate() + diffToSat); sat.setHours(0,0,0,0);
-      const fri = new Date(sat); fri.setDate(sat.getDate() + 6);
+      const diffToFri = (day >= 5) ? -(day - 5) : -(day + 2);
+      const fri = new Date(ref); fri.setDate(ref.getDate() + diffToFri); fri.setHours(0,0,0,0);
+      const thu = new Date(fri); thu.setDate(fri.getDate() + 6);
       const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
       const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()] + ' ' + d.getFullYear();
-      weeks.push({ start: fmt(sat), end: fmt(fri), label: (w===0?'Bu Hafta — ':'')+fmtL(sat) + ' – ' + fmtL(fri) });
+      weeks.push({ start: fmt(fri), end: fmt(thu), label: (w===0?'Bu Hafta — ':'')+fmtL(fri) + ' – ' + fmtL(thu) });
     }
     area.innerHTML = `
       <label>Hafta Seçin</label>
@@ -1240,119 +1258,121 @@ function pdfIndir() {
   const hevents = calcHesaplasmaEvents(filterFn);
   const filteredEntries = entries.filter(e => filterFn(e) && !e._settled && e.type !== 'hesaplasma');
 
-  // Kayıt detayları
-  const typeLabels = { income:'Alacak', expense:'Alınan Para', masraf:'Masraf', mesai:'Mesai', odeme:'Ödeme', hesaplasma:'Hesaplaşma' };
-  const detailRows = filteredEntries.map(e => {
-    let tip = typeLabels[e.type] || e.type;
-    if (e.type === 'income') tip = e.jobType === 'daily' ? 'Günlük İş' : 'Özel İş';
-    let tutar = '';
-    if (e.type === 'mesai') tutar = (e.mesaiHours||0).toFixed(2) + ' saat';
-    else tutar = fmtMoney(e.amount);
-    return `<tr>
-      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#374151">${fmtDate(e.date)}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#374151">${tip}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#374151;max-width:180px;overflow:hidden;text-overflow:ellipsis">${e.desc||'-'}</td>
-      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:700;text-align:right;color:${e.type==='expense'?'#b91c1c':e.type==='masraf'?'#c2410c':'#0d7a4e'}">${tutar}</td>
-    </tr>`;
-  }).join('');
-
-  const hesaplasmaRows = hevents.map(he => `
-    <tr style="background:#fffbeb">
-      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#b45309">${fmtDate(he.date)}</td>
-      <td colspan="2" style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#b45309">💸 Hesaplaşma</td>
-      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:700;text-align:right;color:#b45309">${fmtMoney(he._hesaplasma||he.amount)}</td>
-    </tr>`).join('');
-
   const printDate = new Date().toLocaleDateString('tr-TR', {day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
 
-  const html = `<!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="UTF-8">
-<title>${altBaslik} — ${baslik}</title>
-<style>
-  body { font-family: -apple-system,'Segoe UI',sans-serif; background:#fff; color:#111827; margin:0; padding:24px; }
-  .header { background:#1a3a5c; color:#fff; border-radius:12px; padding:20px 24px; margin-bottom:20px; }
-  .header h1 { font-size:20px; font-weight:800; margin:0 0 4px; }
-  .header p { font-size:13px; opacity:0.75; margin:0; }
-  .summary-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
-  .stat-box { border-radius:10px; padding:14px 16px; }
-  .stat-box .label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; opacity:0.75; }
-  .stat-box .value { font-size:20px; font-weight:800; }
-  .green { background:#e6f5ee; color:#0d7a4e; }
-  .red   { background:#fee2e2; color:#b91c1c; }
-  .amber { background:#fef3c7; color:#b45309; }
-  .blue  { background:#dbeafe; color:#1d4ed8; }
-  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.08); }
-  thead tr { background:#f9fafb; }
-  thead th { padding:9px 10px; text-align:left; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#6b7280; border-bottom:2px solid #e5e7eb; }
-  .footer { margin-top:20px; text-align:center; font-size:11px; color:#9ca3af; }
-  @media print { body { padding:12px; } }
-</style>
-</head>
-<body>
-<div class="header">
-  <h1>💼 Ücret Takip — ${altBaslik}</h1>
-  <p>${baslik} &nbsp;|&nbsp; Oluşturulma: ${printDate}</p>
-</div>
-
-<div class="summary-grid">
-  <div class="stat-box green">
-    <div class="label">💼 Toplam Alacak</div>
-    <div class="value">${fmtMoney(d.alacak)}</div>
-  </div>
-  <div class="stat-box red">
-    <div class="label">💵 Alınan Para</div>
-    <div class="value">${fmtMoney(d.exp)}</div>
-  </div>
-  <div class="stat-box ${d.kalan >= 0 ? 'amber' : 'red'}">
-    <div class="label">⚖️ Kalan Alacak</div>
-    <div class="value">${fmtMoney(d.kalan)}</div>
-  </div>
-  <div class="stat-box green">
-    <div class="label">🔨 İş Alacağı</div>
-    <div class="value">${fmtMoney(d.inc)}</div>
-  </div>
-  <div class="stat-box amber">
-    <div class="label">🧾 Masraf Alacağı</div>
-    <div class="value">${fmtMoney(d.masraf)}</div>
-  </div>
-  <div class="stat-box blue">
-    <div class="label">⏱️ Mesai / 📅 Gün</div>
-    <div class="value">${d.mesai.toFixed(1)}sa / ${d.gun}g</div>
-  </div>
-</div>
-
-${filteredEntries.length > 0 || hevents.length > 0 ? `
-<table>
-  <thead>
-    <tr>
-      <th>Tarih</th>
-      <th>Tür</th>
-      <th>Açıklama</th>
-      <th style="text-align:right">Tutar</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${detailRows}
-    ${hesaplasmaRows}
-  </tbody>
-</table>` : '<div style="text-align:center;padding:32px;color:#9ca3af;font-size:14px">Bu dönemde kayıt bulunamadı.</div>'}
-
-<div class="footer">💼 Ücret Takip Uygulaması — ${printDate}</div>
-
-<script>window.onload = function(){ window.print(); }<\/script>
-</body>
-</html>`;
-
   closePdfModal();
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.target = '_blank';
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+  // jsPDF ile gerçek PDF oluştur ve kaydet
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+  const pageW = 210, margin = 14, contentW = pageW - margin * 2;
+  let y = 14;
+
+  // Başlık kutusu
+  doc.setFillColor(26, 58, 92);
+  doc.roundedRect(margin, y, contentW, 22, 3, 3, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+  doc.text('Ücret Takip — ' + altBaslik, margin + 4, y + 8);
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(baslik + '   |   Oluşturulma: ' + printDate, margin + 4, y + 16);
+  y += 28;
+
+  // Özet kartlar (2 satır x 3 sütun)
+  const cards = [
+    { label: 'Toplam Alacak', value: fmtMoney(d.alacak), r:230,g:246,b:235, tr:13,tg:122,tb:78 },
+    { label: 'Alınan Para',   value: fmtMoney(d.exp),    r:254,g:226,b:226, tr:185,tg:28,tb:28 },
+    { label: 'Kalan Alacak',  value: fmtMoney(d.kalan),  r:254,g:243,b:199, tr:180,tg:83,tb:9 },
+    { label: 'İş Alacağı',    value: fmtMoney(d.inc),    r:230,g:246,b:235, tr:13,tg:122,tb:78 },
+    { label: 'Masraf Alacağı',value: fmtMoney(d.masraf), r:255,g:247,b:237, tr:194,tg:65,tb:12 },
+    { label: 'Mesai / Gün',   value: d.mesai.toFixed(1)+'sa / '+d.gun+'g', r:219,g:234,b:254, tr:29,tg:78,tb:216 },
+  ];
+  const cw = (contentW - 8) / 3;
+  cards.forEach((c, i) => {
+    const cx = margin + (i % 3) * (cw + 4);
+    const cy = y + Math.floor(i / 3) * 18;
+    doc.setFillColor(c.r, c.g, c.b);
+    doc.roundedRect(cx, cy, cw, 15, 2, 2, 'F');
+    doc.setTextColor(c.tr, c.tg, c.tb);
+    doc.setFontSize(7); doc.setFont('helvetica', 'bold');
+    doc.text(c.label.toUpperCase(), cx + 3, cy + 5);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text(c.value, cx + 3, cy + 12);
+  });
+  y += 40;
+
+  // Tablo başlığı
+  if (filteredEntries.length > 0 || hevents.length > 0) {
+    doc.setFillColor(249, 250, 251);
+    doc.rect(margin, y, contentW, 8, 'F');
+    doc.setDrawColor(229, 231, 235);
+    doc.rect(margin, y, contentW, 8, 'S');
+    doc.setTextColor(107, 114, 128);
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+    doc.text('TARİH', margin + 2, y + 5.5);
+    doc.text('TÜR', margin + 38, y + 5.5);
+    doc.text('AÇIKLAMA', margin + 62, y + 5.5);
+    doc.text('TUTAR', pageW - margin - 2, y + 5.5, { align: 'right' });
+    y += 8;
+
+    const typeLabels2 = { income:'Alacak', expense:'Alınan Para', masraf:'Masraf', mesai:'Mesai', odeme:'Ödeme' };
+    const allRows = [...filteredEntries, ...hevents];
+    allRows.forEach((e, idx) => {
+      if (y > 272) { doc.addPage(); y = 14; }
+      const rowH = 7;
+      // Zebra
+      if (idx % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y, contentW, rowH, 'F'); }
+      doc.setDrawColor(240, 241, 243);
+      doc.line(margin, y + rowH, margin + contentW, y + rowH);
+
+      let tip = typeLabels2[e.type] || e.type;
+      if (e.type === 'income') tip = e.jobType === 'daily' ? 'Günlük İş' : 'Özel İş';
+      if (e.type === 'hesaplasma') tip = 'Hesaplaşma';
+      let tutar = e.type === 'mesai' ? (e.mesaiHours||0).toFixed(2)+' saat' : fmtMoney(e.amount);
+
+      // Renk
+      if (e.type === 'expense') doc.setTextColor(185, 28, 28);
+      else if (e.type === 'masraf') doc.setTextColor(194, 65, 12);
+      else if (e.type === 'hesaplasma') doc.setTextColor(180, 83, 9);
+      else doc.setTextColor(13, 122, 78);
+
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
+      doc.setTextColor(55, 65, 81);
+      // Tarih kısalt
+      const dt = new Date(e.date + 'T00:00:00');
+      const dateShort = dt.getDate() + ' ' + MONTHS_TR[dt.getMonth()] + ' ' + dt.getFullYear();
+      doc.text(dateShort, margin + 2, y + 5);
+      doc.text(tip, margin + 38, y + 5);
+      // Açıklama kırp
+      const descTxt = doc.splitTextToSize(e.desc || '-', 50)[0];
+      doc.text(descTxt, margin + 62, y + 5);
+      // Tutar renkli
+      if (e.type === 'expense') doc.setTextColor(185, 28, 28);
+      else if (e.type === 'masraf') doc.setTextColor(194, 65, 12);
+      else if (e.type === 'hesaplasma') doc.setTextColor(180, 83, 9);
+      else doc.setTextColor(13, 122, 78);
+      doc.setFont('helvetica', 'bold');
+      doc.text(tutar, pageW - margin - 2, y + 5, { align: 'right' });
+      y += rowH;
+    });
+  } else {
+    doc.setTextColor(156, 163, 175);
+    doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+    doc.text('Bu dönemde kayıt bulunamadı.', pageW / 2, y + 10, { align: 'center' });
+    y += 20;
+  }
+
+  // Alt bilgi
+  y += 6;
+  doc.setDrawColor(229, 231, 235);
+  doc.line(margin, y, pageW - margin, y);
+  doc.setTextColor(156, 163, 175);
+  doc.setFontSize(7); doc.setFont('helvetica', 'normal');
+  doc.text('Ücret Takip Uygulaması — ' + printDate, pageW / 2, y + 5, { align: 'center' });
+
+  const fileName = 'ucret_rapor_' + (baslik.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ\s]/g, '_').replace(/\s+/g,'_').slice(0,40)) + '.pdf';
+  doc.save(fileName);
 }
 </script>
 
@@ -1378,10 +1398,11 @@ function load() {
 function save() {
   localStorage.setItem('ucret_settings', JSON.stringify(settings));
   localStorage.setItem('ucret_entries', JSON.stringify(entries));
-  // Her kayıtta localStorage'a otomatik yedek yaz
   const backup = { version: 1, backupDate: new Date().toISOString(), settings, entries };
   localStorage.setItem('ucret_auto_backup', JSON.stringify(backup));
   updateHeaderBackup();
+  // Klasör seçildiyse otomatik kaydet
+  autoSaveToFolder();
 }
 
 // === FORMAT ===
@@ -1488,13 +1509,15 @@ function saveEntry() {
       entry.desc = document.getElementById('income-desc').value || 'Özel İş';
     }
   } else if (currentEntryType === 'expense') {
-    const amt = parseFloat(document.getElementById('expense-amount').value);
-    if (!amt || amt <= 0) { alert('Lütfen geçerli bir tutar girin.'); return; }
+    const raw = document.getElementById('expense-amount').value;
+    const amt = raw === '' ? 0 : parseFloat(raw);
+    if (isNaN(amt) || amt < 0) { alert('Lütfen geçerli bir tutar girin.'); return; }
     entry.amount = amt;
     entry.desc = document.getElementById('expense-desc').value || 'Alınan Para';
   } else if (currentEntryType === 'masraf') {
-    const amt = parseFloat(document.getElementById('masraf-amount').value);
-    if (!amt || amt <= 0) { alert('Lütfen masraf tutarını girin.'); return; }
+    const raw = document.getElementById('masraf-amount').value;
+    const amt = raw === '' ? 0 : parseFloat(raw);
+    if (isNaN(amt) || amt < 0) { alert('Lütfen masraf tutarını girin.'); return; }
     entry.amount = amt;
     entry.masrafCat = currentMasrafCat;
     entry.billable = document.getElementById('masraf-billable').checked;
@@ -1502,13 +1525,14 @@ function saveEntry() {
     entry.desc = document.getElementById('masraf-desc').value || (catLabels[currentMasrafCat] + ' Masrafı');
   } else if (currentEntryType === 'mesai') {
     const hours = parseFloat(document.getElementById('mesai-hours-input').value);
-    if (!hours || hours <= 0) { alert('Lütfen geçerli bir mesai saati girin.'); return; }
+    if (isNaN(hours) || hours < 0) { alert('Lütfen geçerli bir mesai saati girin.'); return; }
     entry.amount = 0;
-    entry.mesaiHours = parseFloat(hours.toFixed(2));
-    entry.desc = document.getElementById('mesai-desc').value || `Mesai ${hours.toFixed(2)} saat`;
+    entry.mesaiHours = parseFloat((hours||0).toFixed(2));
+    entry.desc = document.getElementById('mesai-desc').value || `Mesai ${(hours||0).toFixed(2)} saat`;
   } else if (currentEntryType === 'odeme') {
-    const amt = parseFloat(document.getElementById('odeme-amount').value);
-    if (!amt || amt <= 0) { alert('Lütfen geçerli bir ödeme tutarı girin.'); return; }
+    const raw = document.getElementById('odeme-amount').value;
+    const amt = raw === '' ? 0 : parseFloat(raw);
+    if (isNaN(amt) || amt < 0) { alert('Lütfen geçerli bir ödeme tutarı girin.'); return; }
     entry.amount = amt;
     entry.desc = document.getElementById('odeme-desc').value || 'Hesaplaşma Sonrası Ödeme';
   }
@@ -1540,13 +1564,13 @@ function deleteEntry(id) {
 // === HOME ===
 function getWeekRange() {
   const now = new Date();
-  const day = now.getDay(); // 0=Pazar, 6=Cumartesi
-  // Hafta Cumartesi başlar: diffToSat
-  const diffToSat = (day === 6) ? 0 : -(day + 1);
-  const sat = new Date(now); sat.setDate(now.getDate() + diffToSat); sat.setHours(0,0,0,0);
-  const fri = new Date(sat); fri.setDate(sat.getDate() + 6); fri.setHours(23,59,59,999);
+  const day = now.getDay(); // 0=Pazar, 5=Cuma, 6=Cumartesi
+  // Hafta Cuma başlar: Cuma=5 → diff=0, Cumartesi=6 → diff=-1, Pazar=0 → diff=-2 ... Perşembe=4 → diff=-6
+  const diffToFri = (day >= 5) ? -(day - 5) : -(day + 2);
+  const fri = new Date(now); fri.setDate(now.getDate() + diffToFri); fri.setHours(0,0,0,0);
+  const thu = new Date(fri); thu.setDate(fri.getDate() + 6); thu.setHours(23,59,59,999);
   const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-  return { start: fmt(sat), end: fmt(fri), monDate: sat, sunDate: fri };
+  return { start: fmt(fri), end: fmt(thu), monDate: fri, sunDate: thu };
 }
 
 function calcOdemeBakiyesi() {
@@ -2323,17 +2347,17 @@ function renderRapor() {
   </div>`;
 
   if (raporMode === 'haftalik') {
-    // Son 12 hafta
+    // Son 12 hafta — Cuma başlangıçlı
     const weeks = [];
     for (let w = 0; w < 12; w++) {
       const ref = new Date(); ref.setDate(ref.getDate() - w * 7);
       const day = ref.getDay();
-      const diffToSat = (day === 6) ? 0 : -(day + 1);
-      const sat = new Date(ref); sat.setDate(ref.getDate() + diffToSat); sat.setHours(0,0,0,0);
-      const fri = new Date(sat); fri.setDate(sat.getDate() + 6);
+      const diffToFri = (day >= 5) ? -(day - 5) : -(day + 2);
+      const fri = new Date(ref); fri.setDate(ref.getDate() + diffToFri); fri.setHours(0,0,0,0);
+      const thu = new Date(fri); thu.setDate(fri.getDate() + 6);
       const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
       const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()];
-      weeks.push({ start: fmt(sat), end: fmt(fri), label: fmtL(sat) + ' – ' + fmtL(fri) });
+      weeks.push({ start: fmt(fri), end: fmt(thu), label: fmtL(fri) + ' – ' + fmtL(thu) });
     }
     weeks.forEach((wk, i) => {
       const fn = e => e.date >= wk.start && e.date <= wk.end;
@@ -2555,6 +2579,135 @@ function doHesaplasma(tutar) {
 }
 
 
+// === KLASÖR KAYDETME (File System Access API) ===
+let _fsDirectoryHandle = null;
+
+async function _loadFsHandle() {
+  if (_fsDirectoryHandle) return _fsDirectoryHandle;
+  try {
+    const stored = localStorage.getItem('ucret_fs_handle');
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // IndexedDB'de saklı handle'ı geri yükle
+      const h = await _idbGetHandle();
+      if (h) {
+        const perm = await h.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') { _fsDirectoryHandle = h; return h; }
+      }
+    }
+  } catch(e) {}
+  return null;
+}
+
+function _idbSaveHandle(handle) {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('ucret_fs_db', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
+    req.onsuccess = e => {
+      const db = e.target.result;
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(handle, 'dir');
+      tx.oncomplete = () => { res(); db.close(); };
+      tx.onerror = rej;
+    };
+    req.onerror = rej;
+  });
+}
+
+function _idbGetHandle() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('ucret_fs_db', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
+    req.onsuccess = e => {
+      const db = e.target.result;
+      const tx = db.transaction('handles', 'readonly');
+      const get = tx.objectStore('handles').get('dir');
+      get.onsuccess = () => { res(get.result || null); db.close(); };
+      get.onerror = () => { res(null); db.close(); };
+    };
+    req.onerror = () => res(null);
+  });
+}
+
+async function selectSaveFolder() {
+  if (!window.showDirectoryPicker) {
+    alert('Bu tarayıcı klasör seçimini desteklemiyor.\nChrome veya Edge kullanmanız gerekiyor.\n\nNormal indirme yöntemi kullanılacak.');
+    return false;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'documents' });
+    _fsDirectoryHandle = handle;
+    await _idbSaveHandle(handle);
+    localStorage.setItem('ucret_fs_handle', '1');
+    localStorage.setItem('ucret_fs_folder_name', handle.name);
+    updateFolderStatus();
+    showBackupMsg('✅ Klasör seçildi: ' + handle.name, 'var(--accent-green)');
+    // Hemen kaydet
+    await _writeToFolder();
+    return true;
+  } catch(e) {
+    if (e.name !== 'AbortError') showBackupMsg('❌ Klasör seçilemedi', 'var(--accent-red)');
+    return false;
+  }
+}
+
+async function _writeToFolder() {
+  if (!_fsDirectoryHandle) return false;
+  try {
+    const perm = await _fsDirectoryHandle.requestPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') { _fsDirectoryHandle = null; return false; }
+    const data = { version: 1, savedAt: new Date().toISOString(), settings, entries };
+    const json = JSON.stringify(data, null, 2);
+    const fh = await _fsDirectoryHandle.getFileHandle('ucret_takip_veriler.json', { create: true });
+    const writable = await fh.createWritable();
+    await writable.write(json);
+    await writable.close();
+    localStorage.setItem('ucret_last_backup', Date.now().toString());
+    updateHeaderBackup();
+    return true;
+  } catch(e) {
+    _fsDirectoryHandle = null;
+    return false;
+  }
+}
+
+async function autoSaveToFolder() {
+  const h = await _loadFsHandle();
+  if (!h) return;
+  await _writeToFolder();
+}
+
+function updateFolderStatus() {
+  const name = localStorage.getItem('ucret_fs_folder_name');
+  const el = document.getElementById('folder-status-text');
+  if (el) {
+    if (name) {
+      el.innerHTML = `📂 <strong>${name}</strong> klasörüne otomatik kaydediliyor`;
+      el.style.color = 'var(--accent-green)';
+    } else {
+      el.innerHTML = 'Klasör seçilmedi';
+      el.style.color = 'var(--text-muted)';
+    }
+  }
+}
+
+async function clearSaveFolder() {
+  _fsDirectoryHandle = null;
+  localStorage.removeItem('ucret_fs_handle');
+  localStorage.removeItem('ucret_fs_folder_name');
+  try {
+    const req = indexedDB.open('ucret_fs_db', 1);
+    req.onsuccess = e => {
+      const db = e.target.result;
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').delete('dir');
+      db.close();
+    };
+  } catch(e) {}
+  updateFolderStatus();
+  showBackupMsg('🗑️ Klasör bağlantısı kaldırıldı', 'var(--accent-amber)');
+}
+
 function exportData() {
   const data = {
     version: 1,
@@ -2571,11 +2724,10 @@ function exportData() {
   a.download = `ucret_takip_yedek_${tarih}.json`;
   a.click();
   URL.revokeObjectURL(url);
-  // Son yedek tarihini kaydet
   localStorage.setItem('ucret_last_backup', Date.now().toString());
   updateHeaderBackup();
   showBackupMsg('✅ Yedek indirildi!', 'var(--accent-green)');
-  renderHome(); // banner'ı kaldır
+  renderHome();
 }
 
 function updateHeaderBackup() {
@@ -2623,6 +2775,7 @@ function showBackupMsg(msg, color) {
 // === SETTINGS ===
 function initSettings() {
   document.getElementById('daily-rate-input').value = settings.dailyRate || '';
+  updateFolderStatus();
 }
 function saveSettings() {
   const rate = parseFloat(document.getElementById('daily-rate-input').value);
@@ -2663,6 +2816,7 @@ updateHeaderDate();
 updateHeaderBackup();
 initAddForm();
 renderHome();
+_loadFsHandle();
 </script>
 </body>
 </html>
