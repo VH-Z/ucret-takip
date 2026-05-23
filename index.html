@@ -731,6 +731,56 @@
   }
   .modal-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
   .modal-btns .btn { font-size: 14px; padding: 13px; }
+
+  /* PDF MODAL */
+  .pdf-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+    z-index: 500; align-items: flex-end; justify-content: center;
+  }
+  .pdf-overlay.open { display: flex; }
+  .pdf-sheet {
+    background: var(--card); border-radius: 20px 20px 0 0;
+    padding: 24px 20px 36px; width: 100%; max-width: 480px;
+    box-shadow: 0 -4px 32px rgba(0,0,0,0.18);
+  }
+  .pdf-title {
+    font-size: 17px; font-weight: 800; color: var(--primary);
+    text-align: center; margin-bottom: 6px;
+  }
+  .pdf-sub {
+    font-size: 13px; color: var(--text-muted);
+    text-align: center; margin-bottom: 20px;
+  }
+  .pdf-mode-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin-bottom: 18px;
+  }
+  .pdf-mode-btn {
+    padding: 14px 8px; border-radius: 12px;
+    border: 2px solid var(--border); background: var(--bg);
+    font-size: 13px; font-weight: 700; color: var(--text-muted);
+    cursor: pointer; text-align: center; transition: all 0.15s;
+  }
+  .pdf-mode-btn.selected {
+    border-color: var(--accent-blue); background: var(--accent-blue-bg);
+    color: var(--accent-blue);
+  }
+  .pdf-detail-area { margin-bottom: 18px; }
+  .pdf-detail-area label {
+    font-size: 13px; font-weight: 600; color: var(--text);
+    margin-bottom: 6px; display: block;
+  }
+  .pdf-detail-area select,
+  .pdf-detail-area input[type=date],
+  .pdf-detail-area input[type=number] {
+    width: 100%; padding: 11px 13px;
+    border: 1.5px solid var(--border); border-radius: 9px;
+    font-size: 14px; color: var(--text); background: var(--bg);
+    outline: none; appearance: none; margin-bottom: 10px;
+  }
+  .pdf-detail-area select:focus,
+  .pdf-detail-area input:focus { border-color: var(--primary-light); }
+  .pdf-date-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 </style>
 </head>
 <body>
@@ -876,6 +926,10 @@
 
 <!-- PAGE: HAFTALIK RAPOR -->
 <div class="page" id="page-rapor">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <span></span>
+    <button onclick="openPdfModal()" style="background:var(--accent-red);color:#fff;border:none;border-radius:10px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(185,28,28,0.25)">📄 PDF Al</button>
+  </div>
   <div id="rapor-content"></div>
 </div>
 
@@ -1034,6 +1088,273 @@
     </div>
   </div>
 </div>
+
+<!-- PDF DÖKÜM MODAL -->
+<div class="pdf-overlay" id="pdf-modal">
+  <div class="pdf-sheet">
+    <div class="pdf-title">📄 PDF Raporu Al</div>
+    <div class="pdf-sub">Hangi dönem için rapor almak istiyorsunuz?</div>
+
+    <div class="pdf-mode-grid">
+      <button class="pdf-mode-btn" id="pdfmod-gun" onclick="pdfSelectMode('gun')">
+        📆<br>Belirli Gün
+      </button>
+      <button class="pdf-mode-btn" id="pdfmod-haftalik" onclick="pdfSelectMode('haftalik')">
+        📅<br>Haftalık
+      </button>
+      <button class="pdf-mode-btn" id="pdfmod-aylik" onclick="pdfSelectMode('aylik')">
+        🗓️<br>Aylık
+      </button>
+      <button class="pdf-mode-btn" id="pdfmod-aralik" onclick="pdfSelectMode('aralik')">
+        🔎<br>Tarih Aralığı
+      </button>
+    </div>
+
+    <div class="pdf-detail-area" id="pdf-detail-area"></div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <button class="btn" style="background:var(--bg);color:var(--text-muted);border:1.5px solid var(--border)" onclick="closePdfModal()">İptal</button>
+      <button class="btn btn-primary" id="pdf-indir-btn" onclick="pdfIndir()" style="background:var(--accent-red)">📄 PDF İndir</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// === PDF MODAL ===
+let pdfMode = null;
+
+function openPdfModal() {
+  pdfMode = null;
+  document.querySelectorAll('.pdf-mode-btn').forEach(b => b.classList.remove('selected'));
+  document.getElementById('pdf-detail-area').innerHTML = '';
+  document.getElementById('pdf-modal').classList.add('open');
+}
+
+function closePdfModal() {
+  document.getElementById('pdf-modal').classList.remove('open');
+}
+
+function pdfSelectMode(mode) {
+  pdfMode = mode;
+  document.querySelectorAll('.pdf-mode-btn').forEach(b => b.classList.remove('selected'));
+  document.getElementById('pdfmod-' + mode).classList.add('selected');
+
+  const area = document.getElementById('pdf-detail-area');
+  const today = todayStr();
+
+  if (mode === 'gun') {
+    area.innerHTML = `
+      <label>Gün Seçin</label>
+      <input type="date" id="pdf-gun-date" value="${today}">
+    `;
+  } else if (mode === 'haftalik') {
+    // Son 12 haftanın listesi
+    const weeks = [];
+    for (let w = 0; w < 12; w++) {
+      const ref = new Date(); ref.setDate(ref.getDate() - w * 7);
+      const day = ref.getDay();
+      const diffToSat = (day === 6) ? 0 : -(day + 1);
+      const sat = new Date(ref); sat.setDate(ref.getDate() + diffToSat); sat.setHours(0,0,0,0);
+      const fri = new Date(sat); fri.setDate(sat.getDate() + 6);
+      const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+      const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()] + ' ' + d.getFullYear();
+      weeks.push({ start: fmt(sat), end: fmt(fri), label: (w===0?'Bu Hafta — ':'')+fmtL(sat) + ' – ' + fmtL(fri) });
+    }
+    area.innerHTML = `
+      <label>Hafta Seçin</label>
+      <select id="pdf-hafta-sel">
+        ${weeks.map((wk,i) => `<option value="${i}">${wk.label}</option>`).join('')}
+      </select>
+    `;
+    area._weeks = weeks;
+  } else if (mode === 'aylik') {
+    const years = [...new Set(entries.map(e => e.date?.slice(0,4)).filter(Boolean))].sort((a,b)=>b-a);
+    if (years.length === 0) years.push(String(new Date().getFullYear()));
+    const curY = new Date().getFullYear();
+    const curM = new Date().getMonth() + 1;
+    area.innerHTML = `
+      <label>Yıl Seçin</label>
+      <select id="pdf-yil-sel">
+        ${years.map(y => `<option value="${y}" ${y==curY?'selected':''}>${y}</option>`).join('')}
+      </select>
+      <label>Ay Seçin</label>
+      <select id="pdf-ay-sel">
+        ${MONTHS_TR.map((m,i) => `<option value="${i+1}" ${i+1===curM?'selected':''}>${m}</option>`).join('')}
+      </select>
+    `;
+  } else if (mode === 'aralik') {
+    area.innerHTML = `
+      <label>Tarih Aralığı</label>
+      <div class="pdf-date-row">
+        <div>
+          <label style="font-size:11px;color:var(--text-muted)">Başlangıç</label>
+          <input type="date" id="pdf-aralik-start" value="${today}">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-muted)">Bitiş</label>
+          <input type="date" id="pdf-aralik-end" value="${today}">
+        </div>
+      </div>
+    `;
+  }
+}
+
+function pdfIndir() {
+  if (!pdfMode) { alert('Lütfen bir dönem seçin.'); return; }
+
+  let filterFn, baslik, altBaslik;
+
+  if (pdfMode === 'gun') {
+    const gun = document.getElementById('pdf-gun-date').value;
+    if (!gun) { alert('Lütfen gün seçin.'); return; }
+    filterFn = e => e.date === gun;
+    baslik = fmtDate(gun);
+    altBaslik = 'Günlük Rapor';
+  } else if (pdfMode === 'haftalik') {
+    const idx = parseInt(document.getElementById('pdf-hafta-sel').value);
+    const weeks = document.getElementById('pdf-detail-area')._weeks;
+    const wk = weeks[idx];
+    filterFn = e => e.date >= wk.start && e.date <= wk.end;
+    const fmtL = s => { const dt = new Date(s+'T00:00:00'); return dt.getDate()+' '+MONTHS_TR[dt.getMonth()]+' '+dt.getFullYear(); };
+    baslik = fmtL(wk.start) + ' – ' + fmtL(wk.end);
+    altBaslik = 'Haftalık Rapor';
+  } else if (pdfMode === 'aylik') {
+    const yil = document.getElementById('pdf-yil-sel').value;
+    const ay = String(document.getElementById('pdf-ay-sel').value).padStart(2,'0');
+    const ym = yil + '-' + ay;
+    filterFn = e => e.date?.startsWith(ym);
+    baslik = MONTHS_TR[parseInt(ay)-1] + ' ' + yil;
+    altBaslik = 'Aylık Rapor';
+  } else if (pdfMode === 'aralik') {
+    const start = document.getElementById('pdf-aralik-start').value;
+    const end = document.getElementById('pdf-aralik-end').value;
+    if (!start || !end) { alert('Lütfen başlangıç ve bitiş tarihi seçin.'); return; }
+    if (end < start) { alert('Bitiş tarihi başlangıçtan önce olamaz.'); return; }
+    filterFn = e => e.date >= start && e.date <= end;
+    const fmtL = s => { const dt = new Date(s+'T00:00:00'); return dt.getDate()+' '+MONTHS_TR[dt.getMonth()]+' '+dt.getFullYear(); };
+    baslik = fmtL(start) + ' – ' + fmtL(end);
+    altBaslik = 'Aralık Raporu';
+  }
+
+  const d = calcRaporData(filterFn);
+  const hevents = calcHesaplasmaEvents(filterFn);
+  const filteredEntries = entries.filter(e => filterFn(e) && !e._settled && e.type !== 'hesaplasma');
+
+  // Kayıt detayları
+  const typeLabels = { income:'Alacak', expense:'Alınan Para', masraf:'Masraf', mesai:'Mesai', odeme:'Ödeme', hesaplasma:'Hesaplaşma' };
+  const detailRows = filteredEntries.map(e => {
+    let tip = typeLabels[e.type] || e.type;
+    if (e.type === 'income') tip = e.jobType === 'daily' ? 'Günlük İş' : 'Özel İş';
+    let tutar = '';
+    if (e.type === 'mesai') tutar = (e.mesaiHours||0).toFixed(2) + ' saat';
+    else tutar = fmtMoney(e.amount);
+    return `<tr>
+      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#374151">${fmtDate(e.date)}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#374151">${tip}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#374151;max-width:180px;overflow:hidden;text-overflow:ellipsis">${e.desc||'-'}</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:700;text-align:right;color:${e.type==='expense'?'#b91c1c':e.type==='masraf'?'#c2410c':'#0d7a4e'}">${tutar}</td>
+    </tr>`;
+  }).join('');
+
+  const hesaplasmaRows = hevents.map(he => `
+    <tr style="background:#fffbeb">
+      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#b45309">${fmtDate(he.date)}</td>
+      <td colspan="2" style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#b45309">💸 Hesaplaşma</td>
+      <td style="padding:7px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;font-weight:700;text-align:right;color:#b45309">${fmtMoney(he._hesaplasma||he.amount)}</td>
+    </tr>`).join('');
+
+  const printDate = new Date().toLocaleDateString('tr-TR', {day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+
+  const html = `<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>${altBaslik} — ${baslik}</title>
+<style>
+  body { font-family: -apple-system,'Segoe UI',sans-serif; background:#fff; color:#111827; margin:0; padding:24px; }
+  .header { background:#1a3a5c; color:#fff; border-radius:12px; padding:20px 24px; margin-bottom:20px; }
+  .header h1 { font-size:20px; font-weight:800; margin:0 0 4px; }
+  .header p { font-size:13px; opacity:0.75; margin:0; }
+  .summary-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
+  .stat-box { border-radius:10px; padding:14px 16px; }
+  .stat-box .label { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:6px; opacity:0.75; }
+  .stat-box .value { font-size:20px; font-weight:800; }
+  .green { background:#e6f5ee; color:#0d7a4e; }
+  .red   { background:#fee2e2; color:#b91c1c; }
+  .amber { background:#fef3c7; color:#b45309; }
+  .blue  { background:#dbeafe; color:#1d4ed8; }
+  table { width:100%; border-collapse:collapse; background:#fff; border-radius:10px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,0.08); }
+  thead tr { background:#f9fafb; }
+  thead th { padding:9px 10px; text-align:left; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#6b7280; border-bottom:2px solid #e5e7eb; }
+  .footer { margin-top:20px; text-align:center; font-size:11px; color:#9ca3af; }
+  @media print { body { padding:12px; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>💼 Ücret Takip — ${altBaslik}</h1>
+  <p>${baslik} &nbsp;|&nbsp; Oluşturulma: ${printDate}</p>
+</div>
+
+<div class="summary-grid">
+  <div class="stat-box green">
+    <div class="label">💼 Toplam Alacak</div>
+    <div class="value">${fmtMoney(d.alacak)}</div>
+  </div>
+  <div class="stat-box red">
+    <div class="label">💵 Alınan Para</div>
+    <div class="value">${fmtMoney(d.exp)}</div>
+  </div>
+  <div class="stat-box ${d.kalan >= 0 ? 'amber' : 'red'}">
+    <div class="label">⚖️ Kalan Alacak</div>
+    <div class="value">${fmtMoney(d.kalan)}</div>
+  </div>
+  <div class="stat-box green">
+    <div class="label">🔨 İş Alacağı</div>
+    <div class="value">${fmtMoney(d.inc)}</div>
+  </div>
+  <div class="stat-box amber">
+    <div class="label">🧾 Masraf Alacağı</div>
+    <div class="value">${fmtMoney(d.masraf)}</div>
+  </div>
+  <div class="stat-box blue">
+    <div class="label">⏱️ Mesai / 📅 Gün</div>
+    <div class="value">${d.mesai.toFixed(1)}sa / ${d.gun}g</div>
+  </div>
+</div>
+
+${filteredEntries.length > 0 || hevents.length > 0 ? `
+<table>
+  <thead>
+    <tr>
+      <th>Tarih</th>
+      <th>Tür</th>
+      <th>Açıklama</th>
+      <th style="text-align:right">Tutar</th>
+    </tr>
+  </thead>
+  <tbody>
+    ${detailRows}
+    ${hesaplasmaRows}
+  </tbody>
+</table>` : '<div style="text-align:center;padding:32px;color:#9ca3af;font-size:14px">Bu dönemde kayıt bulunamadı.</div>'}
+
+<div class="footer">💼 Ücret Takip Uygulaması — ${printDate}</div>
+
+<script>window.onload = function(){ window.print(); }<\/script>
+</body>
+</html>`;
+
+  closePdfModal();
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+</script>
 
 <script>
 // === STATE ===
