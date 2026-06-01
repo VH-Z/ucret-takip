@@ -950,6 +950,13 @@
       </div>
       <input type="number" class="setting-input" id="daily-rate-input" inputmode="decimal" placeholder="0">
     </div>
+    <div class="setting-row" style="align-items:flex-start;padding-top:16px;padding-bottom:16px">
+      <div style="flex:1">
+        <div class="setting-label">Hafta Başlangıcı</div>
+        <div class="setting-sub" style="margin-top:4px">Haftalık rapor ve özet için</div>
+      </div>
+      <div id="week-day-chips" style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px;max-width:220px;flex-shrink:0"></div>
+    </div>
     <div style="margin-top:14px">
       <button class="btn btn-primary" onclick="saveSettings()">💾 Ayarları Kaydet</button>
     </div>
@@ -1166,25 +1173,29 @@ function pdfSelectMode(mode) {
       <input type="date" id="pdf-gun-date" value="${today}">
     `;
   } else if (mode === 'haftalik') {
-    // Son 12 haftanın listesi — Cuma başlangıçlı
+    // Son 12 haftanın listesi — settings.weekStartDay bazlı
+    const startDay = (settings.weekStartDay !== undefined) ? settings.weekStartDay : 5;
     const weeks = [];
     for (let w = 0; w < 12; w++) {
       const ref = new Date(); ref.setDate(ref.getDate() - w * 7);
       const day = ref.getDay();
-      const diffToFri = (day >= 5) ? -(day - 5) : -(day + 2);
-      const fri = new Date(ref); fri.setDate(ref.getDate() + diffToFri); fri.setHours(0,0,0,0);
-      const thu = new Date(fri); thu.setDate(fri.getDate() + 6);
+      const diff = (day - startDay + 7) % 7;
+      const wStart = new Date(ref); wStart.setDate(ref.getDate() - diff); wStart.setHours(0,0,0,0);
+      const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 6);
       const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
       const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()] + ' ' + d.getFullYear();
-      weeks.push({ start: fmt(fri), end: fmt(thu), label: (w===0?'Bu Hafta — ':'')+fmtL(fri) + ' – ' + fmtL(thu) });
+      weeks.push({ start: fmt(wStart), end: fmt(wEnd), label: (w===0?'Bu Hafta — ':'')+fmtL(wStart) + ' – ' + fmtL(wEnd) });
     }
+    // Deduplicate (eğer aynı hafta iki kez hesaplandıysa)
+    const seen = new Set();
+    const uniqueWeeks = weeks.filter(wk => { if (seen.has(wk.start)) return false; seen.add(wk.start); return true; });
     area.innerHTML = `
       <label>Hafta Seçin</label>
       <select id="pdf-hafta-sel">
-        ${weeks.map((wk,i) => `<option value="${i}">${wk.label}</option>`).join('')}
+        ${uniqueWeeks.map((wk,i) => `<option value="${i}">${wk.label}</option>`).join('')}
       </select>
     `;
-    area._weeks = weeks;
+    area._weeks = uniqueWeeks;
   } else if (mode === 'aylik') {
     const years = [...new Set(entries.map(e => e.date?.slice(0,4)).filter(Boolean))].sort((a,b)=>b-a);
     if (years.length === 0) years.push(String(new Date().getFullYear()));
@@ -1262,6 +1273,18 @@ function pdfIndir() {
 
   closePdfModal();
 
+  // jsPDF Türkçe karakter dönüştürücü (helvetica Latin-1 dışı desteklemez)
+  function trPDF(s) {
+    if (!s) return '';
+    return String(s)
+      .replace(/ğ/g,'g').replace(/Ğ/g,'G')
+      .replace(/ü/g,'u').replace(/Ü/g,'U')
+      .replace(/ş/g,'s').replace(/Ş/g,'S')
+      .replace(/ı/g,'i').replace(/İ/g,'I')
+      .replace(/ö/g,'o').replace(/Ö/g,'O')
+      .replace(/ç/g,'c').replace(/Ç/g,'C');
+  }
+
   // jsPDF ile gerçek PDF oluştur ve kaydet
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
@@ -1274,9 +1297,9 @@ function pdfIndir() {
   doc.roundedRect(margin, y, contentW, 22, 3, 3, 'F');
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-  doc.text('Ücret Takip — ' + altBaslik, margin + 4, y + 8);
+  doc.text(trPDF('Ücret Takip — ' + altBaslik), margin + 4, y + 8);
   doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-  doc.text(baslik + '   |   Oluşturulma: ' + printDate, margin + 4, y + 16);
+  doc.text(trPDF(baslik + '   |   Oluşturulma: ' + printDate), margin + 4, y + 16);
   y += 28;
 
   // Özet kartlar (2 satır x 3 sütun)
@@ -1296,9 +1319,9 @@ function pdfIndir() {
     doc.roundedRect(cx, cy, cw, 15, 2, 2, 'F');
     doc.setTextColor(c.tr, c.tg, c.tb);
     doc.setFontSize(7); doc.setFont('helvetica', 'bold');
-    doc.text(c.label.toUpperCase(), cx + 3, cy + 5);
+    doc.text(trPDF(c.label.toUpperCase()), cx + 3, cy + 5);
     doc.setFontSize(10); doc.setFont('helvetica', 'bold');
-    doc.text(c.value, cx + 3, cy + 12);
+    doc.text(trPDF(c.value), cx + 3, cy + 12);
   });
   y += 40;
 
@@ -1310,10 +1333,10 @@ function pdfIndir() {
     doc.rect(margin, y, contentW, 8, 'S');
     doc.setTextColor(107, 114, 128);
     doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
-    doc.text('TARİH', margin + 2, y + 5.5);
-    doc.text('TÜR', margin + 38, y + 5.5);
-    doc.text('AÇIKLAMA', margin + 62, y + 5.5);
-    doc.text('TUTAR', pageW - margin - 2, y + 5.5, { align: 'right' });
+    doc.text(trPDF('TARİH'), margin + 2, y + 5.5);
+    doc.text(trPDF('TÜR'), margin + 38, y + 5.5);
+    doc.text(trPDF('AÇIKLAMA'), margin + 62, y + 5.5);
+    doc.text(trPDF('TUTAR'), pageW - margin - 2, y + 5.5, { align: 'right' });
     y += 8;
 
     const typeLabels2 = { income:'Alacak', expense:'Alınan Para', masraf:'Masraf', mesai:'Mesai', odeme:'Ödeme' };
@@ -1342,24 +1365,24 @@ function pdfIndir() {
       // Tarih kısalt
       const dt = new Date(e.date + 'T00:00:00');
       const dateShort = dt.getDate() + ' ' + MONTHS_TR[dt.getMonth()] + ' ' + dt.getFullYear();
-      doc.text(dateShort, margin + 2, y + 5);
-      doc.text(tip, margin + 38, y + 5);
+      doc.text(trPDF(dateShort), margin + 2, y + 5);
+      doc.text(trPDF(tip), margin + 38, y + 5);
       // Açıklama kırp
       const descTxt = doc.splitTextToSize(e.desc || '-', 50)[0];
-      doc.text(descTxt, margin + 62, y + 5);
+      doc.text(trPDF(descTxt), margin + 62, y + 5);
       // Tutar renkli
       if (e.type === 'expense') doc.setTextColor(185, 28, 28);
       else if (e.type === 'masraf') doc.setTextColor(194, 65, 12);
       else if (e.type === 'hesaplasma') doc.setTextColor(180, 83, 9);
       else doc.setTextColor(13, 122, 78);
       doc.setFont('helvetica', 'bold');
-      doc.text(tutar, pageW - margin - 2, y + 5, { align: 'right' });
+      doc.text(trPDF(tutar), pageW - margin - 2, y + 5, { align: 'right' });
       y += rowH;
     });
   } else {
     doc.setTextColor(156, 163, 175);
     doc.setFontSize(10); doc.setFont('helvetica', 'normal');
-    doc.text('Bu dönemde kayıt bulunamadı.', pageW / 2, y + 10, { align: 'center' });
+    doc.text(trPDF('Bu dönemde kayıt bulunamadı.'), pageW / 2, y + 10, { align: 'center' });
     y += 20;
   }
 
@@ -1369,7 +1392,7 @@ function pdfIndir() {
   doc.line(margin, y, pageW - margin, y);
   doc.setTextColor(156, 163, 175);
   doc.setFontSize(7); doc.setFont('helvetica', 'normal');
-  doc.text('Ücret Takip Uygulaması — ' + printDate, pageW / 2, y + 5, { align: 'center' });
+  doc.text(trPDF('Ücret Takip Uygulaması — ' + printDate), pageW / 2, y + 5, { align: 'center' });
 
   const fileName = 'ucret_rapor_' + (baslik.replace(/[^a-zA-Z0-9ğüşıöçĞÜŞİÖÇ\s]/g, '_').replace(/\s+/g,'_').slice(0,40)) + '.pdf';
   doc.save(fileName);
@@ -1378,7 +1401,7 @@ function pdfIndir() {
 
 <script>
 // === STATE ===
-let settings = { dailyRate: 0, hourlyRate: 0 };
+let settings = { dailyRate: 0, hourlyRate: 0, weekStartDay: 5 };
 let entries = [];
 let currentEntryType = 'income';
 let currentJobType = 'daily';
@@ -1392,8 +1415,9 @@ const DAYS_TR = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cu
 function load() {
   try {
     settings = JSON.parse(localStorage.getItem('ucret_settings') || '{"dailyRate":0}');
+    if (settings.weekStartDay === undefined) settings.weekStartDay = 5;
     entries = JSON.parse(localStorage.getItem('ucret_entries') || '[]');
-  } catch(e) { settings = {dailyRate:0}; entries = []; }
+  } catch(e) { settings = {dailyRate:0, weekStartDay:5}; entries = []; }
 }
 function save() {
   localStorage.setItem('ucret_settings', JSON.stringify(settings));
@@ -1564,13 +1588,14 @@ function deleteEntry(id) {
 // === HOME ===
 function getWeekRange() {
   const now = new Date();
-  const day = now.getDay(); // 0=Pazar, 5=Cuma, 6=Cumartesi
-  // Hafta Cuma başlar: Cuma=5 → diff=0, Cumartesi=6 → diff=-1, Pazar=0 → diff=-2 ... Perşembe=4 → diff=-6
-  const diffToFri = (day >= 5) ? -(day - 5) : -(day + 2);
-  const fri = new Date(now); fri.setDate(now.getDate() + diffToFri); fri.setHours(0,0,0,0);
-  const thu = new Date(fri); thu.setDate(fri.getDate() + 6); thu.setHours(23,59,59,999);
+  const day = now.getDay(); // 0=Pazar ... 6=Cumartesi
+  const startDay = (settings.weekStartDay !== undefined) ? settings.weekStartDay : 5;
+  // Haftanın başına olan fark (geçmişe doğru)
+  let diff = (day - startDay + 7) % 7;
+  const start = new Date(now); start.setDate(now.getDate() - diff); start.setHours(0,0,0,0);
+  const end = new Date(start); end.setDate(start.getDate() + 6); end.setHours(23,59,59,999);
   const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-  return { start: fmt(fri), end: fmt(thu), monDate: fri, sunDate: thu };
+  return { start: fmt(start), end: fmt(end), monDate: start, sunDate: end };
 }
 
 function calcOdemeBakiyesi() {
@@ -2775,12 +2800,40 @@ function showBackupMsg(msg, color) {
 // === SETTINGS ===
 function initSettings() {
   document.getElementById('daily-rate-input').value = settings.dailyRate || '';
+  // Hafta başı chip'lerini oluştur
+  const days = [
+    {v:1,l:'Pzt'},{v:2,l:'Sal'},{v:3,l:'Çar'},{v:4,l:'Per'},
+    {v:5,l:'Cum'},{v:6,l:'Cmt'},{v:0,l:'Paz'}
+  ];
+  const cur = (settings.weekStartDay !== undefined) ? settings.weekStartDay : 5;
+  const chipWrap = document.getElementById('week-day-chips');
+  if (chipWrap) {
+    chipWrap.innerHTML = days.map(d =>
+      `<span onclick="selectWeekDay(${d.v})" id="wdchip-${d.v}" style="cursor:pointer;padding:5px 10px;border-radius:20px;font-size:12px;font-weight:700;border:1.5px solid ${d.v===cur?'var(--primary)':'var(--border)'};background:${d.v===cur?'var(--primary)':'var(--bg)'};color:${d.v===cur?'#fff':'var(--text-muted)'};transition:all 0.15s">${d.l}</span>`
+    ).join('');
+  }
   updateFolderStatus();
+}
+function selectWeekDay(v) {
+  settings.weekStartDay = v;
+  // Re-render chips
+  const days = [
+    {v:1,l:'Pzt'},{v:2,l:'Sal'},{v:3,l:'Çar'},{v:4,l:'Per'},
+    {v:5,l:'Cum'},{v:6,l:'Cmt'},{v:0,l:'Paz'}
+  ];
+  days.forEach(d => {
+    const chip = document.getElementById('wdchip-'+d.v);
+    if (!chip) return;
+    chip.style.borderColor = d.v===v ? 'var(--primary)' : 'var(--border)';
+    chip.style.background = d.v===v ? 'var(--primary)' : 'var(--bg)';
+    chip.style.color = d.v===v ? '#fff' : 'var(--text-muted)';
+  });
 }
 function saveSettings() {
   const rate = parseFloat(document.getElementById('daily-rate-input').value);
   if (isNaN(rate) || rate < 0) { alert('Geçerli bir ücret girin.'); return; }
   settings.dailyRate = rate;
+  if (settings.weekStartDay === undefined) settings.weekStartDay = 5;
   save();
   const btn = document.querySelector('#page-settings .btn-primary');
   const orig = btn.textContent;
