@@ -1307,6 +1307,11 @@ function pdfIndir() {
   y += 28;
 
   // Özet kartlar (2 satır x 3 sütun)
+  const tumZamanlarPdf = calcRaporData(() => true);
+  const odemeBakiyePdf = calcOdemeBakiyesi();
+  const tumAlacakPdf = tumZamanlarPdf.alacak;
+  const tumKalanPdf = tumZamanlarPdf.kalan + odemeBakiyePdf.kalan;
+
   const cards = [
     { label: 'Toplam Alacak', value: '+' + fmtMoney(d.alacak), r:230,g:246,b:235, tr:13,tg:122,tb:78 },
     { label: 'Alınan Para',   value: '-' + fmtMoney(d.exp),    r:254,g:226,b:226, tr:185,tg:28,tb:28 },
@@ -1398,7 +1403,29 @@ function pdfIndir() {
   }
 
   // Alt bilgi
-  y += 6;
+  y += 8;
+  // Tüm zamanlar banner — rapor sonunda
+  if (y > 262) { doc.addPage(); y = 14; }
+  const halfW = (contentW - 4) / 2;
+  doc.setFillColor(219, 234, 254);
+  doc.roundedRect(margin, y, contentW, 16, 3, 3, 'F');
+  doc.setDrawColor(147, 197, 253);
+  doc.roundedRect(margin, y, contentW, 16, 3, 3, 'S');
+  doc.setTextColor(29, 78, 216);
+  doc.setFontSize(6.5); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('TUM ZAMANLAR TOPLAM ALACAK'), margin + 4, y + 5.5);
+  doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('+' + fmtMoney(tumAlacakPdf)), margin + 4, y + 12.5);
+  doc.setDrawColor(147, 197, 253);
+  doc.line(margin + halfW + 2, y + 2, margin + halfW + 2, y + 14);
+  const tkr = tumKalanPdf >= 0 ? [13,122,78] : [185,28,28];
+  doc.setTextColor(...tkr);
+  doc.setFontSize(6.5); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('TUM ZAMANLAR KALAN ALACAK'), margin + halfW + 6, y + 5.5);
+  doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF((tumKalanPdf >= 0 ? '+' : '') + fmtMoney(tumKalanPdf)), margin + halfW + 6, y + 12.5);
+  y += 22;
+
   doc.setDrawColor(229, 231, 235);
   doc.line(margin, y, pageW - margin, y);
   doc.setTextColor(156, 163, 175);
@@ -1753,6 +1780,69 @@ function renderHome() {
       <span class="detail-row-val" style="color:${paidPct>=80?'var(--accent-green)':paidPct>=40?'var(--accent-amber)':'var(--accent-red)'}">${paidPct}%</span>
     </div>
   </div>`;
+
+  // === TÜM ZAMANLAR ÖZETİ ===
+  {
+    const allData = calcRaporData(() => true);
+    const odemeBak = calcOdemeBakiyesi();
+    const totalGunAll = entries.filter(e => e.type === 'income' && e.jobType === 'daily').length;
+    const netAll = allData.kalan;
+    const netColor = netAll >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+    const netBg = netAll >= 0 ? 'linear-gradient(135deg,#ecfdf5,#d1fae5)' : 'linear-gradient(135deg,#fff1f2,#ffe4e6)';
+    const netBorder = netAll >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+    const pctAll = allData.alacak > 0 ? Math.round(allData.exp / allData.alacak * 100) : 0;
+    const pctColor = pctAll >= 80 ? 'var(--accent-green)' : pctAll >= 40 ? 'var(--accent-amber)' : 'var(--accent-red)';
+    html += `
+    <div class="card" style="margin-bottom:12px;border:2px solid ${netBorder};background:${netBg}">
+      <div class="card-title" style="color:${netColor};display:flex;justify-content:space-between;align-items:center">
+        <span>📊 Tüm Zamanlar Özeti</span>
+        <span style="font-size:11px;font-weight:700;background:${netBorder};color:#fff;padding:3px 9px;border-radius:20px">${entries.length} kayıt</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+        <div style="text-align:center;padding:12px 8px;background:rgba(255,255,255,0.75);border-radius:12px">
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:4px">Toplam Alacak</div>
+          <div style="font-size:15px;font-weight:800;color:var(--accent-green)">${fmtMoney(allData.alacak)}</div>
+        </div>
+        <div style="text-align:center;padding:12px 8px;background:rgba(255,255,255,0.75);border-radius:12px">
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:4px">Toplam Alınan</div>
+          <div style="font-size:15px;font-weight:800;color:var(--accent-red)">${fmtMoney(allData.exp)}</div>
+        </div>
+        <div style="text-align:center;padding:12px 8px;background:rgba(255,255,255,0.75);border-radius:12px">
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:4px">Toplam Masraf</div>
+          <div style="font-size:15px;font-weight:800;color:var(--accent-amber)">${fmtMoney(allData.masraf)}</div>
+        </div>
+        <div style="text-align:center;padding:12px 8px;background:rgba(255,255,255,0.75);border-radius:12px">
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;margin-bottom:4px">Net Kalan</div>
+          <div style="font-size:15px;font-weight:800;color:${netColor}">${fmtMoney(netAll)}</div>
+        </div>
+      </div>
+      <div class="detail-row" style="border-top:1px solid rgba(0,0,0,0.08);padding-top:8px">
+        <span class="detail-row-label">📅 Toplam Çalışılan Gün</span>
+        <span class="detail-row-val stat-amber">${totalGunAll} gün</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-row-label">⏱️ Toplam Mesai</span>
+        <span class="detail-row-val stat-blue">${allData.mesai.toFixed(1)} saat</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-row-label">💳 Genel Tahsilat Oranı</span>
+        <span class="detail-row-val" style="color:${pctColor};font-weight:800">${pctAll}%</span>
+      </div>
+      ${odemeBak.totalHesaplasma > 0 ? `
+      <div class="detail-row" style="border-top:1px solid rgba(0,0,0,0.08);padding-top:8px">
+        <span class="detail-row-label">💸 Hesaplaşma Toplam</span>
+        <span class="detail-row-val stat-amber">${fmtMoney(odemeBak.totalHesaplasma)}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-row-label">✅ Hesaplaşma Ödenen</span>
+        <span class="detail-row-val stat-green">${fmtMoney(odemeBak.totalOdeme)}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-row-label">⏳ Hesaplaşma Kalan</span>
+        <span class="detail-row-val" style="color:${odemeBak.kalan>0?'var(--accent-amber)':odemeBak.kalan===0?'var(--accent-green)':'var(--accent-red)'};font-weight:800">${fmtMoney(odemeBak.kalan)}</span>
+      </div>` : ''}
+    </div>`;
+  }
 
   // Bugünkü girişler
   html += `<div class="card"><div class="card-title">Bugünkü Girişler</div>`;
@@ -2319,6 +2409,15 @@ function raporKartHTML(baslik, altBaslik, d, renk, hesaplasmaEvents) {
     </div>`;
   }
   const odeHtml = d.odeme > 0 ? `<div class="detail-row"><span class="detail-row-label">💳 Hesaplaşma Sonrası Ödeme</span><span class="detail-row-val" style="color:var(--accent-green);font-weight:800">${fmtMoney(d.odeme)}</span></div>` : '';
+
+  // Tüm zamanlar toplam alacak & kalan
+  const tumZamanlarData = calcRaporData(() => true);
+  const tumAlacak = tumZamanlarData.alacak;
+  const odemeBakTmp = calcOdemeBakiyesi();
+  const tumKalan = tumZamanlarData.kalan + odemeBakTmp.kalan;
+  const tumKalanColor = tumKalan >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+  const tumKalanBg = tumKalan >= 0 ? 'linear-gradient(90deg,#d1fae5,#ecfdf5)' : 'linear-gradient(90deg,#fee2e2,#fff1f2)';
+
   return `<div class="card" style="margin-bottom:10px;${renk?'border-left:4px solid '+renk:''}">
     <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
       <span>${baslik}</span>
@@ -2329,6 +2428,28 @@ function raporKartHTML(baslik, altBaslik, d, renk, hesaplasmaEvents) {
     <div class="detail-row"><span class="detail-row-label">💼 Toplam Alacak</span><span class="detail-row-val stat-green" style="font-weight:800">${fmtMoney(d.alacak)}</span></div>
     <div class="detail-row"><span class="detail-row-label">💵 Alınan Para</span><span class="detail-row-val stat-red">${fmtMoney(d.exp)}</span></div>
     <div class="detail-row"><span class="detail-row-label">⚖️ Kalan</span><span class="detail-row-val" style="color:${kalanColor};font-weight:800">${fmtMoney(d.kalan)}</span></div>
+    ${odeHtml}
+    <div class="detail-row"><span class="detail-row-label">⏱️ Mesai</span><span class="detail-row-val stat-blue">${d.mesai.toFixed(2)} saat</span></div>
+    <div class="detail-row"><span class="detail-row-label">📅 Çalışılan Gün</span><span class="detail-row-val stat-amber">${d.gun} gün</span></div>
+    ${hesaplasmaHtml}
+  </div>`;
+
+  return `<div class="card" style="margin-bottom:10px;${renk?'border-left:4px solid '+renk:''}">
+    <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+      <span>${baslik}</span>
+      ${altBaslik ? `<span style="font-size:11px;color:var(--text-muted);font-weight:500">${altBaslik}</span>` : ''}
+    </div>
+    ${tutarBannerHtml}
+    <div class="detail-row"><span class="detail-row-label">💼 İş Alacağı</span><span class="detail-row-val stat-green">${fmtMoney(d.inc)}</span></div>
+    <div class="detail-row"><span class="detail-row-label">🧾 Masraf Alacağı</span><span class="detail-row-val stat-green">${fmtMoney(d.masraf)}</span></div>
+    <div class="detail-row"><span class="detail-row-label">💼 Toplam Alacak</span><span class="detail-row-val stat-green" style="font-weight:800">${fmtMoney(d.alacak)}</span></div>
+    <div class="detail-row"><span class="detail-row-label">💵 Alınan Para</span><span class="detail-row-val stat-red">${fmtMoney(d.exp)}</span></div>
+    <div class="detail-row" style="background:${tumKalanBg};border-radius:8px;padding:6px 8px;margin:4px 0">
+      <span class="detail-row-label" style="font-weight:700">⚖️ Bu Dönem Kalan</span><span class="detail-row-val" style="color:${kalanColor};font-weight:800">${fmtMoney(d.kalan)}</span>
+    </div>
+    <div class="detail-row" style="background:${tumKalanBg};border-radius:8px;padding:6px 8px;margin:4px 0">
+      <span class="detail-row-label" style="font-weight:700">⚖️ Tüm Zamanlar Kalan</span><span class="detail-row-val" style="color:${tumKalanColor};font-weight:800">${fmtMoney(tumKalan)}</span>
+    </div>
     ${odeHtml}
     <div class="detail-row"><span class="detail-row-label">⏱️ Mesai</span><span class="detail-row-val stat-blue">${d.mesai.toFixed(2)} saat</span></div>
     <div class="detail-row"><span class="detail-row-label">📅 Çalışılan Gün</span><span class="detail-row-val stat-amber">${d.gun} gün</span></div>
@@ -2385,17 +2506,23 @@ function renderRapor() {
   </div>`;
 
   if (raporMode === 'haftalik') {
-    // Son 12 hafta — Cuma başlangıçlı
+    // Son 12 hafta — settings.weekStartDay bazlı
+    const startDay = (settings.weekStartDay !== undefined) ? settings.weekStartDay : 5;
     const weeks = [];
-    for (let w = 0; w < 12; w++) {
+    const seen = new Set();
+    for (let w = 0; w < 14; w++) {
       const ref = new Date(); ref.setDate(ref.getDate() - w * 7);
       const day = ref.getDay();
-      const diffToFri = (day >= 5) ? -(day - 5) : -(day + 2);
-      const fri = new Date(ref); fri.setDate(ref.getDate() + diffToFri); fri.setHours(0,0,0,0);
-      const thu = new Date(fri); thu.setDate(fri.getDate() + 6);
+      const diff = (day - startDay + 7) % 7;
+      const wStart = new Date(ref); wStart.setDate(ref.getDate() - diff); wStart.setHours(0,0,0,0);
+      const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 6);
       const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
       const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()];
-      weeks.push({ start: fmt(fri), end: fmt(thu), label: fmtL(fri) + ' – ' + fmtL(thu) });
+      const key = fmt(wStart);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      weeks.push({ start: fmt(wStart), end: fmt(wEnd), label: fmtL(wStart) + ' – ' + fmtL(wEnd) });
+      if (weeks.length >= 12) break;
     }
     weeks.forEach((wk, i) => {
       const fn = e => e.date >= wk.start && e.date <= wk.end;
