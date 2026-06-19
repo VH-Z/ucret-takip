@@ -822,7 +822,8 @@
         <button class="type-btn" id="btn-expense" onclick="setEntryType('expense')">💵 Alınan Para</button>
         <button class="type-btn" id="btn-masraf" onclick="setEntryType('masraf')">🧾 Masraf</button>
         <button class="type-btn" id="btn-mesai" onclick="setEntryType('mesai')">⏱️ Mesai</button>
-        <button class="type-btn" id="btn-odeme" onclick="setEntryType('odeme')" style="grid-column:span 2">💸 Ödeme (Hesaplaşma Sonrası)</button>
+        <button class="type-btn" id="btn-km" onclick="setEntryType('km')">🚗 Araç Km</button>
+        <button class="type-btn" id="btn-odeme" onclick="setEntryType('odeme')">💸 Ödeme</button>
       </div>
     </div>
 
@@ -901,6 +902,18 @@
       </div>
     </div>
 
+    <!-- ARAÇ KM -->
+    <div id="km-fields" style="display:none">
+      <div class="form-group">
+        <label>🚗 Araç Kullanım Km</label>
+        <input type="number" id="km-input" placeholder="Örn: 25" inputmode="decimal" step="0.1" min="0.1">
+      </div>
+      <div class="form-group">
+        <label>Açıklama (İsteğe bağlı)</label>
+        <textarea id="km-desc" placeholder="Nereye gidildi?..."></textarea>
+      </div>
+    </div>
+
     <!-- ÖDEME -->
     <div id="odeme-fields" style="display:none">
       <div style="background:var(--accent-amber-bg);border-radius:10px;padding:12px;margin-bottom:14px;font-size:13px;color:var(--accent-amber);font-weight:600">
@@ -913,6 +926,12 @@
       <div class="form-group">
         <label>Açıklama (İsteğe bağlı)</label>
         <textarea id="odeme-desc" placeholder="Ödeme kaynağı, not..."></textarea>
+      </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+          <input type="checkbox" id="odeme-km-check" style="width:18px;height:18px;cursor:pointer">
+          🚗 Bu ödeme Km ile ilgili
+        </label>
       </div>
     </div>
 
@@ -1306,7 +1325,7 @@ function pdfIndir() {
   doc.text(trPDF(baslik + '   |   Oluşturulma: ' + printDate), margin + 4, y + 16);
   y += 28;
 
-  // Özet kartlar (2 satır x 3 sütun)
+  // Özet kartlar (3 satır x 3 sütun)
   const tumZamanlarPdf = calcRaporData(() => true);
   const odemeBakiyePdf = calcOdemeBakiyesi();
   const tumAlacakPdf = tumZamanlarPdf.alacak;
@@ -1318,7 +1337,9 @@ function pdfIndir() {
     { label: 'Kalan Alacak',  value: (toplamKalan >= 0 ? '+' : '') + fmtMoney(toplamKalan), r:toplamKalan >= 0 ? 254:254, g:toplamKalan >= 0 ? 243:226, b:toplamKalan >= 0 ? 199:226, tr:toplamKalan >= 0 ? 180 : 185, tg:toplamKalan >= 0 ? 83 : 28, tb:toplamKalan >= 0 ? 9 : 28 },
     { label: 'Is Alacagi',    value: '+' + fmtMoney(d.inc),    r:230,g:246,b:235, tr:13,tg:122,tb:78 },
     { label: 'Masraf Alacagi',value: '+' + fmtMoney(d.masraf), r:255,g:247,b:237, tr:13,tg:122,tb:78 },
-    { label: 'Mesai / Gun',   value: d.mesai.toFixed(1)+'sa / '+d.gun+'g', r:219,g:234,b:254, tr:29,tg:78,tb:216 },
+    { label: 'Calisilan Gun', value: d.gun + ' gun',           r:255,g:247,b:237, tr:180,tg:83,tb:9 },
+    { label: 'Mesai Suresi',  value: d.mesai.toFixed(1)+' sa', r:219,g:234,b:254, tr:29,tg:78,tb:216 },
+    { label: 'Arac Km',       value: (d.km||0).toFixed(1)+' km', r:224,g:231,b:255, tr:67,tg:56,tb:202 },
   ];
   const cw = (contentW - 8) / 3;
   cards.forEach((c, i) => {
@@ -1332,7 +1353,7 @@ function pdfIndir() {
     doc.setFontSize(10); doc.setFont('helvetica', 'bold');
     doc.text(trPDF(c.value), cx + 3, cy + 12);
   });
-  y += 40;
+  y += 58;
 
   // Tablo başlığı
   if (filteredEntries.length > 0 || hevents.length > 0) {
@@ -1348,7 +1369,7 @@ function pdfIndir() {
     doc.text(trPDF('TUTAR'), pageW - margin - 2, y + 5.5, { align: 'right' });
     y += 8;
 
-    const typeLabels2 = { income:'Alacak', expense:'Alınan Para', masraf:'Masraf', mesai:'Mesai', odeme:'Ödeme' };
+    const typeLabels2 = { income:'Alacak', expense:'Alınan Para', masraf:'Masraf', mesai:'Mesai', km:'Arac Km', odeme:'Ödeme' };
     const allRows = [...filteredEntries, ...hevents];
     allRows.forEach((e, idx) => {
       if (y > 272) { doc.addPage(); y = 14; }
@@ -1359,10 +1380,12 @@ function pdfIndir() {
       doc.line(margin, y + rowH, margin + contentW, y + rowH);
 
       let tip = typeLabels2[e.type] || e.type;
+      if (e.type === 'odeme' && e.kmOdeme) tip = 'Km Odemesi';
       if (e.type === 'income') tip = e.jobType === 'daily' ? 'Günlük İş' : 'Özel İş';
       if (e.type === 'hesaplasma') tip = 'Hesaplaşma';
       let tutar;
       if (e.type === 'mesai') tutar = (e.mesaiHours||0).toFixed(2)+' saat';
+      else if (e.type === 'km') tutar = (e.km||0).toFixed(1)+' km';
       else if (e.type === 'expense') tutar = '-' + fmtMoney(e.amount);
       else if (e.type === 'masraf') tutar = '+' + fmtMoney(e.amount);
       else if (e.type === 'income') tutar = '+' + fmtMoney(e.amount);
@@ -1424,6 +1447,37 @@ function pdfIndir() {
   doc.text(trPDF('TUM ZAMANLAR KALAN ALACAK'), margin + halfW + 6, y + 5.5);
   doc.setFontSize(10); doc.setFont('helvetica', 'bold');
   doc.text(trPDF((tumKalanPdf >= 0 ? '+' : '') + fmtMoney(tumKalanPdf)), margin + halfW + 6, y + 12.5);
+  y += 18;
+
+  // Tüm zamanlar toplam km — banner'ın altına eklendi
+  if (y > 270) { doc.addPage(); y = 14; }
+  doc.setFillColor(224, 231, 255);
+  doc.roundedRect(margin, y, contentW, 14, 3, 3, 'F');
+  doc.setDrawColor(199, 210, 254);
+  doc.roundedRect(margin, y, contentW, 14, 3, 3, 'S');
+  doc.setTextColor(67, 56, 202);
+  doc.setFontSize(6.5); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('TUM ZAMANLAR TOPLAM ARAC KM'), margin + 4, y + 5.5);
+  doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF((tumZamanlarPdf.km || 0).toFixed(1) + ' km'), margin + 4, y + 11.5);
+  y += 20;
+
+  // Km Ödemesi — ayrı bölüm (bu dönemde Km ile ilişkilendirilmiş ödemeler toplamı)
+  const kmOdemeToplamPdf = filteredEntries
+    .filter(e => e.type === 'odeme' && e.kmOdeme)
+    .reduce((s, e) => s + (e.amount || 0), 0);
+  if (y > 264) { doc.addPage(); y = 14; }
+  doc.setFillColor(224, 231, 255);
+  doc.roundedRect(margin, y, contentW, 16, 3, 3, 'F');
+  doc.setDrawColor(165, 180, 252);
+  doc.roundedRect(margin, y, contentW, 16, 3, 3, 'S');
+  doc.setTextColor(67, 56, 202);
+  doc.setFontSize(7); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('KM ODEMESI'), margin + 4, y + 5.5);
+  doc.setFontSize(6.5); doc.setFont('helvetica', 'normal');
+  doc.text(trPDF('Bu doneme ait Km ile iliskilendirilmis odemeler'), margin + 4, y + 10);
+  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('+' + fmtMoney(kmOdemeToplamPdf)), pageW - margin - 4, y + 11, { align: 'right' });
   y += 22;
 
   doc.setDrawColor(229, 231, 235);
@@ -1524,16 +1578,22 @@ function initAddForm() {
   document.getElementById('masraf-desc').value = '';
   document.getElementById('mesai-hours-input').value = '';
   document.getElementById('mesai-desc').value = '';
+  const kmInput = document.getElementById('km-input');
+  const kmDesc = document.getElementById('km-desc');
+  if (kmInput) kmInput.value = '';
+  if (kmDesc) kmDesc.value = '';
   const odemeAmt = document.getElementById('odeme-amount');
   const odemeDesc = document.getElementById('odeme-desc');
+  const odemeKmCheck = document.getElementById('odeme-km-check');
   if (odemeAmt) odemeAmt.value = '';
   if (odemeDesc) odemeDesc.value = '';
+  if (odemeKmCheck) odemeKmCheck.checked = false;
   document.getElementById('masraf-billable').checked = false;
 }
 
 function setEntryType(type) {
   currentEntryType = type;
-  ['income','expense','masraf','mesai','odeme'].forEach(t => {
+  ['income','expense','masraf','mesai','km','odeme'].forEach(t => {
     const btn = document.getElementById('btn-' + t);
     if (btn) btn.className = 'type-btn' + (t === type ? ' active-daily' : '');
     const fields = document.getElementById(t + '-fields');
@@ -1591,12 +1651,19 @@ function saveEntry() {
     entry.amount = 0;
     entry.mesaiHours = parseFloat((hours||0).toFixed(2));
     entry.desc = document.getElementById('mesai-desc').value || `Mesai ${(hours||0).toFixed(2)} saat`;
+  } else if (currentEntryType === 'km') {
+    const km = parseFloat(document.getElementById('km-input').value);
+    if (isNaN(km) || km <= 0) { alert('Lütfen geçerli bir km değeri girin.'); return; }
+    entry.amount = 0;
+    entry.km = parseFloat(km.toFixed(1));
+    entry.desc = document.getElementById('km-desc').value || `Araç Kullanımı ${km.toFixed(1)} km`;
   } else if (currentEntryType === 'odeme') {
     const raw = document.getElementById('odeme-amount').value;
     const amt = raw === '' ? 0 : parseFloat(raw);
     if (isNaN(amt) || amt < 0) { alert('Lütfen geçerli bir ödeme tutarı girin.'); return; }
     entry.amount = amt;
-    entry.desc = document.getElementById('odeme-desc').value || 'Hesaplaşma Sonrası Ödeme';
+    entry.kmOdeme = !!document.getElementById('odeme-km-check')?.checked;
+    entry.desc = document.getElementById('odeme-desc').value || (entry.kmOdeme ? 'Km Ödemesi' : 'Hesaplaşma Sonrası Ödeme');
   }
 
   entries.push(entry);
@@ -1651,13 +1718,14 @@ function renderHome() {
   const { start, end, monDate, sunDate } = getWeekRange();
   const weekEntries = entries.filter(e => e.date >= start && e.date <= end);
 
-  let totalIncome = 0, totalExpense = 0, totalMasraf = 0, totalMesaiSaat = 0;
+  let totalIncome = 0, totalExpense = 0, totalMasraf = 0, totalMesaiSaat = 0, totalKm = 0;
   weekEntries.forEach(e => {
     if (e._settled) return;
     if (e.type === 'income') totalIncome += e.amount;
     else if (e.type === 'expense') totalExpense += e.amount;
     else if (e.type === 'masraf') totalMasraf += e.amount;
     else if (e.type === 'mesai') totalMesaiSaat += (e.mesaiHours || 0);
+    else if (e.type === 'km') totalKm += (e.km || 0);
   });
   const totalAlacak = totalIncome + totalMasraf;
   const kalanIncome = totalAlacak - totalExpense;
@@ -1768,6 +1836,10 @@ function renderHome() {
       <span class="detail-row-val stat-blue">${totalMesaiSaat.toFixed(2)} saat</span>
     </div>
     <div class="detail-row">
+      <span class="detail-row-label">🚗 Toplam Km</span>
+      <span class="detail-row-val stat-blue">${totalKm.toFixed(1)} km</span>
+    </div>
+    <div class="detail-row">
       <span class="detail-row-label">🧾 Toplam Masraf</span>
       <span class="detail-row-val stat-red">${fmtMoney(totalMasraf)}</span>
     </div>
@@ -1825,6 +1897,10 @@ function renderHome() {
         <span class="detail-row-val stat-blue">${allData.mesai.toFixed(1)} saat</span>
       </div>
       <div class="detail-row">
+        <span class="detail-row-label">🚗 Toplam Km</span>
+        <span class="detail-row-val stat-blue">${allData.km.toFixed(1)} km</span>
+      </div>
+      <div class="detail-row">
         <span class="detail-row-label">💳 Genel Tahsilat Oranı</span>
         <span class="detail-row-val" style="color:${pctColor};font-weight:800">${pctAll}%</span>
       </div>
@@ -1876,12 +1952,15 @@ function renderEntryItemHome(e, showDate=false) {
   } else if (e.type === 'mesai') {
     icon = '⏱️'; iconClass = 'icon-special'; amtColor = 'stat-blue'; sign = '';
     badgeHtml = `<span class="badge badge-special">Mesai ${e.mesaiHours}sa</span>`;
+  } else if (e.type === 'km') {
+    icon = '🚗'; iconClass = 'icon-special'; amtColor = 'stat-blue'; sign = '';
+    badgeHtml = `<span class="badge" style="background:#e0e7ff;color:#4338ca">Araç Km</span>`;
   } else if (e.type === 'hesaplasma') {
     icon = '💸'; iconClass = ''; amtColor = 'stat-amber'; sign = '';
     badgeHtml = `<span class="badge" style="background:#fef3c7;color:var(--accent-amber)">Hesaplaşma</span>`;
   } else if (e.type === 'odeme') {
-    icon = '💳'; iconClass = ''; amtColor = 'stat-green'; sign = '+';
-    badgeHtml = `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme</span>`;
+    icon = e.kmOdeme ? '🚗' : '💳'; iconClass = ''; amtColor = 'stat-green'; sign = '+';
+    badgeHtml = e.kmOdeme ? `<span class="badge" style="background:#e0e7ff;color:#4338ca">Ödeme (Km)</span>` : `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme</span>`;
   } else if (e.jobType === 'daily') {
     icon = '🔄'; iconClass = 'icon-daily'; amtColor = 'stat-green'; sign = '+';
     badgeHtml = '<span class="badge badge-daily">Günlük</span>';
@@ -1894,7 +1973,7 @@ function renderEntryItemHome(e, showDate=false) {
         onclick="togglePaid(${e.id})">${e.paid ? '✓ Alındı' : '○ Bekliyor'}</span>`
     : '';
   const meta = (showDate ? fmtDate(e.date) + ' · ' : '') + badgeHtml + (paidBadge ? ' ' + paidBadge : '');
-  const amtDisplay = e.type === 'mesai' ? `${e.mesaiHours}sa` : `${sign}${fmtMoney(e.amount)}`;
+  const amtDisplay = e.type === 'mesai' ? `${e.mesaiHours}sa` : e.type === 'km' ? `${e.km}km` : `${sign}${fmtMoney(e.amount)}`;
   return `<div class="entry-item">
     <div class="entry-icon ${iconClass}" style="background:${e.type==='hesaplasma'?'#fef3c7':e.type==='odeme'?'#e6f5ee':''}">${icon}</div>
     <div class="entry-info">
@@ -2015,7 +2094,7 @@ function renderHistory() {
     groupKeys = ['_all'];
   }
 
-  const typeLabels = {income:'📥 Alacaklar', expense:'💵 Alınan Para', masraf:'🧾 Masraflar', mesai:'⏱️ Mesailer', hesaplasma:'💸 Hesaplaşmalar', odeme:'💳 Ödemeler'};
+  const typeLabels = {income:'📥 Alacaklar', expense:'💵 Alınan Para', masraf:'🧾 Masraflar', mesai:'⏱️ Mesailer', km:'🚗 Araç Km', hesaplasma:'💸 Hesaplaşmalar', odeme:'💳 Ödemeler'};
   const groupLabel = (k) => {
     if (hf.group === 'date') return fmtDate(k);
     if (hf.group === 'month') return monthLabel(k);
@@ -2055,6 +2134,7 @@ function renderHistory() {
         <span class="fchip ${hf.typeFilter==='expense'?'active-expense':''}" onclick="hf.typeFilter='expense';renderHistory()">💵 Alınan Para</span>
         <span class="fchip ${hf.typeFilter==='masraf'?'active-special':''}" onclick="hf.typeFilter='masraf';renderHistory()">🧾 Masraf</span>
         <span class="fchip ${hf.typeFilter==='mesai'?'active-daily':''}" onclick="hf.typeFilter='mesai';renderHistory()">⏱️ Mesai</span>
+        <span class="fchip ${hf.typeFilter==='km'?'active-daily':''}" onclick="hf.typeFilter='km';renderHistory()">🚗 Araç Km</span>
         <span class="fchip ${hf.typeFilter==='hesaplasma'?'active-special':''}" onclick="hf.typeFilter='hesaplasma';renderHistory()" style="${hf.typeFilter==='hesaplasma'?'background:#fef3c7;color:var(--accent-amber);border-color:var(--accent-amber)':''}">💸 Hesaplaşma</span>
         <span class="fchip ${hf.typeFilter==='odeme'?'active-income':''}" onclick="hf.typeFilter='odeme';renderHistory()">💳 Ödeme</span>
       </div>
@@ -2164,6 +2244,8 @@ function renderEntryItemEditable(e, showDate) {
     icon = catIcons[e.masrafCat] || '🧾'; iconClass = 'icon-expense'; amtColor = 'stat-green'; sign = '+';
   } else if (e.type === 'mesai') {
     icon = '⏱️'; iconClass = 'icon-special'; amtColor = 'stat-amber'; sign = '+';
+  } else if (e.type === 'km') {
+    icon = '🚗'; iconClass = 'icon-special'; amtColor = 'stat-amber'; sign = '+';
   } else if (e.type === 'hesaplasma') {
     icon = '💸'; iconClass = ''; amtColor = 'stat-amber'; sign = '';
   } else if (e.type === 'odeme') {
@@ -2179,13 +2261,14 @@ function renderEntryItemEditable(e, showDate) {
   if (e.type === 'expense') badge = '<span class="badge badge-expense">Alınan Para</span>';
   else if (e.type === 'masraf') badge = `<span class="badge badge-expense" style="background:#fef3c7;color:#92400e">${catLabels[e.masrafCat]||'Masraf'}${e.billable?' 🧾':''}</span>`;
   else if (e.type === 'mesai') badge = `<span class="badge badge-special">${e.mesaiHours}sa ${mesaiTypeLabels[e.mesaiType]||''}</span>`;
+  else if (e.type === 'km') badge = `<span class="badge" style="background:#e0e7ff;color:#4338ca">Araç Km</span>`;
   else if (e.type === 'hesaplasma') badge = `<span class="badge" style="background:#fef3c7;color:var(--accent-amber)">Hesaplaşma</span>`;
-  else if (e.type === 'odeme') badge = `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme (Hesaplaşma Sonrası)</span>`;
+  else if (e.type === 'odeme') badge = e.kmOdeme ? `<span class="badge" style="background:#e0e7ff;color:#4338ca">Ödeme (Km) 🚗</span>` : `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme (Hesaplaşma Sonrası)</span>`;
   else if (e.jobType === 'daily') badge = '<span class="badge badge-daily">Günlük</span>';
   else badge = '<span class="badge badge-special">Özel</span>';
 
   const meta = (showDate ? fmtDate(e.date) + ' · ' : '') + badge;
-  const amtDisplay = e.type === 'mesai' ? `${e.mesaiHours}sa` : `${sign}${fmtMoney(e.amount)}`;
+  const amtDisplay = e.type === 'mesai' ? `${e.mesaiHours}sa` : e.type === 'km' ? `${e.km}km` : `${sign}${fmtMoney(e.amount)}`;
   const isEditable = ['income','expense'].includes(e.type);
 
   return `<div class="entry-item">
@@ -2379,7 +2462,7 @@ let raporYil = new Date().getFullYear();
 let raporAy = new Date().getMonth() + 1; // 1-12
 
 function calcRaporData(filterFn) {
-  let inc = 0, exp = 0, masraf = 0, mesai = 0, gun = 0, odeme = 0;
+  let inc = 0, exp = 0, masraf = 0, mesai = 0, km = 0, gun = 0, odeme = 0;
   entries.forEach(e => {
     if (!filterFn(e)) return;
     if (e._settled || e.type === 'hesaplasma') return;
@@ -2387,9 +2470,10 @@ function calcRaporData(filterFn) {
     else if (e.type === 'expense') exp += e.amount;
     else if (e.type === 'masraf') masraf += e.amount;
     else if (e.type === 'mesai') mesai += (e.mesaiHours || 0);
+    else if (e.type === 'km') km += (e.km || 0);
     else if (e.type === 'odeme') odeme += e.amount;
   });
-  return { inc, exp, masraf, mesai, gun, odeme, alacak: inc + masraf, kalan: inc + masraf - exp };
+  return { inc, exp, masraf, mesai, km, gun, odeme, alacak: inc + masraf, kalan: inc + masraf - exp };
 }
 
 function calcHesaplasmaEvents(filterFn) {
@@ -2430,6 +2514,7 @@ function raporKartHTML(baslik, altBaslik, d, renk, hesaplasmaEvents) {
     <div class="detail-row"><span class="detail-row-label">⚖️ Kalan</span><span class="detail-row-val" style="color:${kalanColor};font-weight:800">${fmtMoney(d.kalan)}</span></div>
     ${odeHtml}
     <div class="detail-row"><span class="detail-row-label">⏱️ Mesai</span><span class="detail-row-val stat-blue">${d.mesai.toFixed(2)} saat</span></div>
+    <div class="detail-row"><span class="detail-row-label">🚗 Araç Km</span><span class="detail-row-val stat-blue">${d.km.toFixed(1)} km</span></div>
     <div class="detail-row"><span class="detail-row-label">📅 Çalışılan Gün</span><span class="detail-row-val stat-amber">${d.gun} gün</span></div>
     ${hesaplasmaHtml}
   </div>`;
@@ -2528,7 +2613,7 @@ function renderRapor() {
       const fn = e => e.date >= wk.start && e.date <= wk.end;
       const d = calcRaporData(fn);
       const hevents = calcHesaplasmaEvents(fn);
-      if (d.inc === 0 && d.masraf === 0 && d.exp === 0 && d.mesai === 0 && hevents.length === 0 && i > 1) return;
+      if (d.inc === 0 && d.masraf === 0 && d.exp === 0 && d.mesai === 0 && d.km === 0 && hevents.length === 0 && i > 1) return;
       html += raporKartHTML(
         i === 0 ? '📍 Bu Hafta' : `${i}. Hafta Öncesi`,
         wk.label,
@@ -2552,7 +2637,7 @@ function renderRapor() {
       const fn = e => e.date?.startsWith(ym);
       const d = calcRaporData(fn);
       const hevents = calcHesaplasmaEvents(fn);
-      if (d.inc === 0 && d.masraf === 0 && d.exp === 0 && d.mesai === 0 && d.odeme === 0 && hevents.length === 0) continue;
+      if (d.inc === 0 && d.masraf === 0 && d.exp === 0 && d.mesai === 0 && d.km === 0 && d.odeme === 0 && hevents.length === 0) continue;
       html += raporKartHTML(MONTHS_TR[m-1] + ' ' + raporYil, null, d, null, hevents);
     }
     if (html.indexOf('detail-row') === -1) {
@@ -2614,24 +2699,26 @@ function renderHesaplasma() {
   const { start, end, monDate, sunDate } = getWeekRange();
   const weekEntries = entries.filter(e => e.date >= start && e.date <= end);
 
-  let wInc = 0, wExp = 0, wMasraf = 0, wMesai = 0, wGun = 0;
+  let wInc = 0, wExp = 0, wMasraf = 0, wMesai = 0, wKm = 0, wGun = 0;
   weekEntries.forEach(e => {
     if (e.type === 'income') wInc += e.amount;
     else if (e.type === 'expense') wExp += e.amount;
     else if (e.type === 'masraf') wMasraf += e.amount;
     else if (e.type === 'mesai') wMesai += (e.mesaiHours || 0);
+    else if (e.type === 'km') wKm += (e.km || 0);
     if (e.type === 'income' && e.jobType === 'daily') wGun++;
   });
   const wKalan = wInc + wMasraf - wExp;
 
   // Tüm zamanların genel toplamı
-  let allInc = 0, allExp = 0, allMasraf = 0, allMesai = 0, allGun = 0;
+  let allInc = 0, allExp = 0, allMasraf = 0, allMesai = 0, allKm = 0, allGun = 0;
   entries.forEach(e => {
     if (e._settled || e.type === 'hesaplasma') return;
     if (e.type === 'income') allInc += e.amount;
     else if (e.type === 'expense') allExp += e.amount;
     else if (e.type === 'masraf') allMasraf += e.amount;
     else if (e.type === 'mesai') allMesai += (e.mesaiHours || 0);
+    else if (e.type === 'km') allKm += (e.km || 0);
     if (e.type === 'income' && e.jobType === 'daily') allGun++;
   });
   const allAlacak = allInc + allMasraf;
@@ -2654,6 +2741,7 @@ function renderHesaplasma() {
     <div class="detail-row"><span class="detail-row-label">💵 Alınan Para</span><span class="detail-row-val stat-red">${fmtMoney(wExp)}</span></div>
     <div class="detail-row"><span class="detail-row-label">🧾 Masraf</span><span class="detail-row-val stat-green">${fmtMoney(wMasraf)}</span></div>
     <div class="detail-row"><span class="detail-row-label">⏱️ Mesai Saati</span><span class="detail-row-val stat-blue">${wMesai.toFixed(2)} saat</span></div>
+    <div class="detail-row"><span class="detail-row-label">🚗 Araç Km</span><span class="detail-row-val stat-blue">${wKm.toFixed(1)} km</span></div>
     <div class="detail-row"><span class="detail-row-label">📅 Çalışılan Gün</span><span class="detail-row-val stat-amber">${wGun} gün</span></div>
   </div>`;
 
@@ -2666,6 +2754,7 @@ function renderHesaplasma() {
     <div class="detail-row"><span class="detail-row-label">💵 Toplam Alınan</span><span class="detail-row-val stat-red">${fmtMoney(allExp)}</span></div>
     <div class="detail-row"><span class="detail-row-label">⚖️ Kalan Alacak</span><span class="detail-row-val" style="color:${allKalan>=0?'var(--accent-green)':'var(--accent-red)'}; font-weight:800">${fmtMoney(allKalan)}</span></div>
     <div class="detail-row"><span class="detail-row-label">⏱️ Toplam Mesai</span><span class="detail-row-val stat-blue">${allMesai.toFixed(2)} saat</span></div>
+    <div class="detail-row"><span class="detail-row-label">🚗 Toplam Araç Km</span><span class="detail-row-val stat-blue">${allKm.toFixed(1)} km</span></div>
     <div class="detail-row"><span class="detail-row-label">📅 Toplam Çalışılan Gün</span><span class="detail-row-val stat-amber">${allGun} gün</span></div>
   </div>`;
 
