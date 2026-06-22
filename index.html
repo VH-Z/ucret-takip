@@ -1205,12 +1205,16 @@ function pdfSelectMode(mode) {
     // Son 12 haftanın listesi — settings.weekStartDay bazlı
     const uniqueWeeks = buildWeekList(12);
     area.innerHTML = `
-      <label>Hafta Seçin</label>
-      <select id="pdf-hafta-sel">
+      <label>Hafta Seçin (Son 12 Hafta)</label>
+      <select id="pdf-hafta-sel" onchange="pdfHaftaSelChanged()">
         ${uniqueWeeks.map((wk,i) => `<option value="${i}">${wk.label}</option>`).join('')}
       </select>
+      <label style="margin-top:12px;display:block">📅 Veya İstediğiniz Bir Tarihi Seçin</label>
+      <input type="date" id="pdf-hafta-custom-date" onchange="pdfHaftaCustomPick()">
+      <div id="pdf-hafta-custom-label" style="font-size:12px;color:var(--primary);margin-top:6px;font-weight:600"></div>
     `;
     area._weeks = uniqueWeeks;
+    area._customWeek = null;
   } else if (mode === 'aylik') {
     const years = [...new Set(entries.map(e => e.date?.slice(0,4)).filter(Boolean))].sort((a,b)=>b-a);
     if (years.length === 0) years.push(String(new Date().getFullYear()));
@@ -1243,6 +1247,25 @@ function pdfSelectMode(mode) {
   }
 }
 
+function pdfHaftaSelChanged() {
+  const area = document.getElementById('pdf-detail-area');
+  area._customWeek = null;
+  const dateInp = document.getElementById('pdf-hafta-custom-date');
+  const lbl = document.getElementById('pdf-hafta-custom-label');
+  if (dateInp) dateInp.value = '';
+  if (lbl) lbl.textContent = '';
+}
+
+function pdfHaftaCustomPick() {
+  const area = document.getElementById('pdf-detail-area');
+  const dateVal = document.getElementById('pdf-hafta-custom-date').value;
+  const lbl = document.getElementById('pdf-hafta-custom-label');
+  if (!dateVal) { area._customWeek = null; if (lbl) lbl.textContent = ''; return; }
+  const wk = weekRangeForDate(dateVal);
+  area._customWeek = wk;
+  if (lbl) lbl.textContent = '📅 Seçilen hafta: ' + wk.label;
+}
+
 function pdfIndir() {
   if (!pdfMode) { alert('Lütfen bir dönem seçin.'); return; }
 
@@ -1255,9 +1278,14 @@ function pdfIndir() {
     baslik = fmtDate(gun);
     altBaslik = 'Günlük Rapor';
   } else if (pdfMode === 'haftalik') {
-    const idx = parseInt(document.getElementById('pdf-hafta-sel').value);
-    const weeks = document.getElementById('pdf-detail-area')._weeks;
-    const wk = weeks[idx];
+    const area = document.getElementById('pdf-detail-area');
+    let wk;
+    if (area._customWeek) {
+      wk = area._customWeek;
+    } else {
+      const idx = parseInt(document.getElementById('pdf-hafta-sel').value);
+      wk = area._weeks[idx];
+    }
     filterFn = e => e.date >= wk.start && e.date <= wk.end;
     const fmtL = s => { const dt = new Date(s+'T00:00:00'); return dt.getDate()+' '+MONTHS_TR[dt.getMonth()]+' '+dt.getFullYear(); };
     baslik = fmtL(wk.start) + ' – ' + fmtL(wk.end);
@@ -1512,6 +1540,7 @@ let currentMasrafCat = 'diger';
 let currentOdemeKategori = 'alacak';
 let currentMesaiType = 'normal';
 let _haftalikWeeksCache = [];
+let _haftalikCustomWeek = null;
 
 const MONTHS_TR = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
 const DAYS_TR = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
@@ -2545,12 +2574,25 @@ function buildWeekList(n) {
   return weeks.filter(wk => { if (seen.has(wk.start)) return false; seen.add(wk.start); return true; });
 }
 
+// Verilen herhangi bir tarihi içeren haftayı hesaplar (settings.weekStartDay bazlı) — sınırsız hafta seçimi için
+function weekRangeForDate(dateStr) {
+  const startDay = (settings.weekStartDay !== undefined) ? settings.weekStartDay : 5;
+  const ref = new Date(dateStr + 'T00:00:00');
+  const day = ref.getDay();
+  const diff = (day - startDay + 7) % 7;
+  const wStart = new Date(ref); wStart.setDate(ref.getDate() - diff); wStart.setHours(0,0,0,0);
+  const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 6);
+  const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()] + ' ' + d.getFullYear();
+  return { start: fmt(wStart), end: fmt(wEnd), label: fmtL(wStart) + ' – ' + fmtL(wEnd) };
+}
+
 function calcHesaplasmaEvents(filterFn) {
   return entries.filter(e => e.type === 'hesaplasma' && filterFn(e));
 }
 
-function pdfHaftalikHesaplasmaIndir(idx) {
-  const wk = _haftalikWeeksCache[idx];
+function pdfHaftalikHesaplasmaIndir() {
+  const wk = resolveHaftalikWeek();
   if (!wk) { alert('Lütfen bir hafta seçin.'); return; }
   const filterFn = e => e.date >= wk.start && e.date <= wk.end;
   const d = calcHaftalikData(filterFn);
@@ -2987,15 +3029,21 @@ function renderHesaplasma() {
 
   // Haftalık Hesaplaşma — sıfırlamaz, sadece bilgilendirme + PDF amaçlı; km, çarpan ile alacaklara eklenir
   _haftalikWeeksCache = buildWeekList(10);
+  _haftalikCustomWeek = null;
   html += `<div class="card" style="border:1.5px solid #818cf8;margin-bottom:12px;background:linear-gradient(135deg,#eef2ff,#e0e7ff)">
     <div class="card-title" style="color:#4338ca">📅 Haftalık Hesaplaşma</div>
     <p style="font-size:12.5px;color:var(--text-muted);margin:0 0 10px 0;line-height:1.6">
       Bu bölüm <strong>toplamları sıfırlamaz</strong> — sadece seçtiğiniz haftanın özetini km çarpanı ile birlikte gösterir ve PDF olarak çıkartır.
     </p>
-    <div class="form-group" style="margin-bottom:10px">
-      <select id="haftalik-hafta-sel" onchange="updateHaftalikBox()" style="width:100%">
+    <div class="form-group" style="margin-bottom:6px">
+      <select id="haftalik-hafta-sel" onchange="haftalikSelChanged()" style="width:100%">
         ${_haftalikWeeksCache.map((wk,i) => `<option value="${i}">${wk.label}</option>`).join('')}
       </select>
+    </div>
+    <div class="form-group" style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text-muted)">📅 Veya İstediğiniz Bir Tarihi Seçin</label>
+      <input type="date" id="haftalik-custom-date" onchange="haftalikCustomPick()" style="width:100%">
+      <div id="haftalik-custom-label" style="font-size:12px;color:#4338ca;margin-top:4px;font-weight:600"></div>
     </div>
     <div id="haftalik-box-content"></div>
   </div>`;
@@ -3062,12 +3110,36 @@ function renderHesaplasma() {
   updateHaftalikBox();
 }
 
-function updateHaftalikBox() {
+function resolveHaftalikWeek() {
+  if (_haftalikCustomWeek) return _haftalikCustomWeek;
   const sel = document.getElementById('haftalik-hafta-sel');
+  const idx = sel ? (parseInt(sel.value) || 0) : 0;
+  return _haftalikWeeksCache[idx];
+}
+
+function haftalikSelChanged() {
+  _haftalikCustomWeek = null;
+  const dateInp = document.getElementById('haftalik-custom-date');
+  const lbl = document.getElementById('haftalik-custom-label');
+  if (dateInp) dateInp.value = '';
+  if (lbl) lbl.textContent = '';
+  updateHaftalikBox();
+}
+
+function haftalikCustomPick() {
+  const dateVal = document.getElementById('haftalik-custom-date').value;
+  const lbl = document.getElementById('haftalik-custom-label');
+  if (!dateVal) { _haftalikCustomWeek = null; if (lbl) lbl.textContent = ''; updateHaftalikBox(); return; }
+  const wk = weekRangeForDate(dateVal);
+  _haftalikCustomWeek = wk;
+  if (lbl) lbl.textContent = '📅 Seçilen hafta: ' + wk.label;
+  updateHaftalikBox();
+}
+
+function updateHaftalikBox() {
   const box = document.getElementById('haftalik-box-content');
-  if (!sel || !box) return;
-  const idx = parseInt(sel.value) || 0;
-  const wk = _haftalikWeeksCache[idx];
+  if (!box) return;
+  const wk = resolveHaftalikWeek();
   if (!wk) return;
   const d = calcHaftalikData(e => e.date >= wk.start && e.date <= wk.end);
 
@@ -3094,7 +3166,7 @@ function updateHaftalikBox() {
     <div class="detail-row"><span class="detail-row-label">⚖️ Kalan Alacak (Km Dahil)</span><span class="detail-row-val" style="color:${d.kalanKm>=0?'var(--accent-green)':'var(--accent-red)'};font-weight:800">${fmtMoney(d.kalanKm)}</span></div>
     <div class="detail-row"><span class="detail-row-label">⏱️ Mesai Saati</span><span class="detail-row-val stat-blue">${d.mesai.toFixed(2)} saat</span></div>
     <div class="detail-row"><span class="detail-row-label">📅 Çalışılan Gün</span><span class="detail-row-val stat-amber">${d.gun} gün</span></div>
-    <button class="btn btn-primary" style="background:#4338ca;width:100%;font-size:14px;padding:12px;margin-top:10px" onclick="pdfHaftalikHesaplasmaIndir(${idx})">📄 Haftalık Hesaplaşma PDF</button>
+    <button class="btn btn-primary" style="background:#4338ca;width:100%;font-size:14px;padding:12px;margin-top:10px" onclick="pdfHaftalikHesaplasmaIndir()">📄 Haftalık Hesaplaşma PDF</button>
   `;
   box.innerHTML = html;
 }
