@@ -928,12 +928,15 @@
         <textarea id="odeme-desc" placeholder="Ödeme kaynağı, not..."></textarea>
       </div>
       <div class="form-group">
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
-          <input type="checkbox" id="odeme-km-check" style="width:18px;height:18px;cursor:pointer">
-          🚗 Bu ödeme Km ile ilgili
-        </label>
+        <label>Bu ödeme hangisiyle ilgili?</label>
+        <div style="display:flex;gap:6px">
+          <button type="button" class="type-btn odeme-kat-btn active-daily" id="okat-alacak" onclick="setOdemeKategori('alacak')" style="flex:1">💼 Alacak</button>
+          <button type="button" class="type-btn odeme-kat-btn" id="okat-mesai" onclick="setOdemeKategori('mesai')" style="flex:1">⏱️ Mesai</button>
+          <button type="button" class="type-btn odeme-kat-btn" id="okat-km" onclick="setOdemeKategori('km')" style="flex:1">🚗 Km</button>
+        </div>
       </div>
     </div>
+
 
     <button class="btn btn-primary" onclick="saveEntry()">💾 Kaydet</button>
   </div>
@@ -968,6 +971,13 @@
         <div class="setting-sub">Sabah akşam alacağınız sabit ücret</div>
       </div>
       <input type="number" class="setting-input" id="daily-rate-input" inputmode="decimal" placeholder="0">
+    </div>
+    <div class="setting-row">
+      <div>
+        <div class="setting-label">🚗 Km Birim Fiyatı</div>
+        <div class="setting-sub">1 km için ₺ — alacaklara km çarpan ile eklenir</div>
+      </div>
+      <input type="number" class="setting-input" id="km-rate-input" inputmode="decimal" step="0.01" placeholder="0">
     </div>
     <div class="setting-row" style="align-items:flex-start;padding-top:16px;padding-bottom:16px">
       <div style="flex:1">
@@ -1193,21 +1203,7 @@ function pdfSelectMode(mode) {
     `;
   } else if (mode === 'haftalik') {
     // Son 12 haftanın listesi — settings.weekStartDay bazlı
-    const startDay = (settings.weekStartDay !== undefined) ? settings.weekStartDay : 5;
-    const weeks = [];
-    for (let w = 0; w < 12; w++) {
-      const ref = new Date(); ref.setDate(ref.getDate() - w * 7);
-      const day = ref.getDay();
-      const diff = (day - startDay + 7) % 7;
-      const wStart = new Date(ref); wStart.setDate(ref.getDate() - diff); wStart.setHours(0,0,0,0);
-      const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 6);
-      const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-      const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()] + ' ' + d.getFullYear();
-      weeks.push({ start: fmt(wStart), end: fmt(wEnd), label: (w===0?'Bu Hafta — ':'')+fmtL(wStart) + ' – ' + fmtL(wEnd) });
-    }
-    // Deduplicate (eğer aynı hafta iki kez hesaplandıysa)
-    const seen = new Set();
-    const uniqueWeeks = weeks.filter(wk => { if (seen.has(wk.start)) return false; seen.add(wk.start); return true; });
+    const uniqueWeeks = buildWeekList(12);
     area.innerHTML = `
       <label>Hafta Seçin</label>
       <select id="pdf-hafta-sel">
@@ -1380,7 +1376,10 @@ function pdfIndir() {
       doc.line(margin, y + rowH, margin + contentW, y + rowH);
 
       let tip = typeLabels2[e.type] || e.type;
-      if (e.type === 'odeme' && e.kmOdeme) tip = 'Km Odemesi';
+      if (e.type === 'odeme') {
+        const okat = odemeKategoriOf(e);
+        tip = okat === 'mesai' ? 'Mesai Odemesi' : okat === 'km' ? 'Km Odemesi' : 'Alacak Odemesi';
+      }
       if (e.type === 'income') tip = e.jobType === 'daily' ? 'Günlük İş' : 'Özel İş';
       if (e.type === 'hesaplasma') tip = 'Hesaplaşma';
       let tutar;
@@ -1462,22 +1461,34 @@ function pdfIndir() {
   doc.text(trPDF((tumZamanlarPdf.km || 0).toFixed(1) + ' km'), margin + 4, y + 11.5);
   y += 20;
 
-  // Km Ödemesi — ayrı bölüm (bu dönemde Km ile ilişkilendirilmiş ödemeler toplamı)
-  const kmOdemeToplamPdf = filteredEntries
-    .filter(e => e.type === 'odeme' && e.kmOdeme)
-    .reduce((s, e) => s + (e.amount || 0), 0);
-  if (y > 264) { doc.addPage(); y = 14; }
-  doc.setFillColor(224, 231, 255);
-  doc.roundedRect(margin, y, contentW, 16, 3, 3, 'F');
-  doc.setDrawColor(165, 180, 252);
-  doc.roundedRect(margin, y, contentW, 16, 3, 3, 'S');
-  doc.setTextColor(67, 56, 202);
-  doc.setFontSize(7); doc.setFont('helvetica', 'bold');
-  doc.text(trPDF('KM ODEMESI'), margin + 4, y + 5.5);
-  doc.setFontSize(6.5); doc.setFont('helvetica', 'normal');
-  doc.text(trPDF('Bu doneme ait Km ile iliskilendirilmis odemeler'), margin + 4, y + 10);
-  doc.setFontSize(11); doc.setFont('helvetica', 'bold');
-  doc.text(trPDF('+' + fmtMoney(kmOdemeToplamPdf)), pageW - margin - 4, y + 11, { align: 'right' });
+  // Ödeme Bölümleri — Alacak / Mesai / Km ödemeleri ayrı ayrı (bu dönem)
+  const odemeKatToplam = { alacak: 0, mesai: 0, km: 0 };
+  filteredEntries.filter(e => e.type === 'odeme').forEach(e => {
+    const kat = odemeKategoriOf(e);
+    odemeKatToplam[kat] = (odemeKatToplam[kat] || 0) + (e.amount || 0);
+  });
+  if (y > 250) { doc.addPage(); y = 14; }
+  doc.setTextColor(107, 114, 128);
+  doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('ODEME BOLUMLERI (BU DONEM)'), margin + 2, y + 4);
+  y += 7;
+
+  const okatCards = [
+    { label: 'Alacak Odemesi', value: odemeKatToplam.alacak, r:230,g:246,b:235, tr:13,tg:122,tb:78 },
+    { label: 'Mesai Odemesi',  value: odemeKatToplam.mesai,  r:219,g:234,b:254, tr:29,tg:78,tb:216 },
+    { label: 'Km Odemesi',     value: odemeKatToplam.km,     r:224,g:231,b:255, tr:67,tg:56,tb:202 },
+  ];
+  const ocw = (contentW - 8) / 3;
+  okatCards.forEach((c, i) => {
+    const cx = margin + i * (ocw + 4);
+    doc.setFillColor(c.r, c.g, c.b);
+    doc.roundedRect(cx, y, ocw, 16, 2, 2, 'F');
+    doc.setTextColor(c.tr, c.tg, c.tb);
+    doc.setFontSize(6.3); doc.setFont('helvetica', 'bold');
+    doc.text(trPDF(c.label.toUpperCase()), cx + 3, y + 5.5);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text(trPDF('+' + fmtMoney(c.value)), cx + 3, y + 12.5);
+  });
   y += 22;
 
   doc.setDrawColor(229, 231, 235);
@@ -1493,12 +1504,14 @@ function pdfIndir() {
 
 <script>
 // === STATE ===
-let settings = { dailyRate: 0, hourlyRate: 0, weekStartDay: 5 };
+let settings = { dailyRate: 0, hourlyRate: 0, weekStartDay: 5, kmRate: 0 };
 let entries = [];
 let currentEntryType = 'income';
 let currentJobType = 'daily';
 let currentMasrafCat = 'diger';
+let currentOdemeKategori = 'alacak';
 let currentMesaiType = 'normal';
+let _haftalikWeeksCache = [];
 
 const MONTHS_TR = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
 const DAYS_TR = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
@@ -1508,8 +1521,9 @@ function load() {
   try {
     settings = JSON.parse(localStorage.getItem('ucret_settings') || '{"dailyRate":0}');
     if (settings.weekStartDay === undefined) settings.weekStartDay = 5;
+    if (settings.kmRate === undefined) settings.kmRate = 0;
     entries = JSON.parse(localStorage.getItem('ucret_entries') || '[]');
-  } catch(e) { settings = {dailyRate:0, weekStartDay:5}; entries = []; }
+  } catch(e) { settings = {dailyRate:0, weekStartDay:5, kmRate:0}; entries = []; }
 }
 function save() {
   localStorage.setItem('ucret_settings', JSON.stringify(settings));
@@ -1562,6 +1576,14 @@ function setMasrafCat(cat) {
   });
 }
 
+function setOdemeKategori(kat) {
+  currentOdemeKategori = kat;
+  ['alacak','mesai','km'].forEach(k => {
+    const btn = document.getElementById('okat-' + k);
+    if (btn) btn.className = 'type-btn odeme-kat-btn' + (k === kat ? ' active-daily' : '');
+  });
+}
+
 function calcMesai() { /* artık kullanılmıyor */ }
 
 // === ADD FORM ===
@@ -1584,10 +1606,9 @@ function initAddForm() {
   if (kmDesc) kmDesc.value = '';
   const odemeAmt = document.getElementById('odeme-amount');
   const odemeDesc = document.getElementById('odeme-desc');
-  const odemeKmCheck = document.getElementById('odeme-km-check');
   if (odemeAmt) odemeAmt.value = '';
   if (odemeDesc) odemeDesc.value = '';
-  if (odemeKmCheck) odemeKmCheck.checked = false;
+  setOdemeKategori('alacak');
   document.getElementById('masraf-billable').checked = false;
 }
 
@@ -1600,6 +1621,7 @@ function setEntryType(type) {
     if (fields) fields.style.display = t === type ? '' : 'none';
   });
   if (type === 'masraf') setMasrafCat('diger');
+  if (type === 'odeme') setOdemeKategori('alacak');
 }
 
 function setJobType(type) {
@@ -1662,8 +1684,9 @@ function saveEntry() {
     const amt = raw === '' ? 0 : parseFloat(raw);
     if (isNaN(amt) || amt < 0) { alert('Lütfen geçerli bir ödeme tutarı girin.'); return; }
     entry.amount = amt;
-    entry.kmOdeme = !!document.getElementById('odeme-km-check')?.checked;
-    entry.desc = document.getElementById('odeme-desc').value || (entry.kmOdeme ? 'Km Ödemesi' : 'Hesaplaşma Sonrası Ödeme');
+    entry.odemeKategori = currentOdemeKategori || 'alacak';
+    const okatLabels = { alacak:'Hesaplaşma Sonrası Ödeme', mesai:'Mesai Ödemesi', km:'Km Ödemesi' };
+    entry.desc = document.getElementById('odeme-desc').value || okatLabels[entry.odemeKategori];
   }
 
   entries.push(entry);
@@ -1703,15 +1726,27 @@ function getWeekRange() {
   return { start: fmt(start), end: fmt(end), monDate: start, sunDate: end };
 }
 
+function odemeKategoriOf(e) {
+  if (e.odemeKategori) return e.odemeKategori;
+  if (e.kmOdeme) return 'km'; // eski kayıtlarla geriye dönük uyumluluk
+  return 'alacak';
+}
+
 function calcOdemeBakiyesi() {
-  // Hesaplaşma sonrası alınan ödemelerin toplamı
-  let totalOdeme = 0;
+  // Hesaplaşma sonrası alınan ödemelerin toplamı (kategoriye göre ayrı ayrı)
+  let totalOdeme = 0, totalOdemeAlacak = 0, totalOdemeMesai = 0, totalOdemeKm = 0;
   let totalHesaplasma = 0;
   entries.forEach(e => {
-    if (e.type === 'odeme') totalOdeme += e.amount;
+    if (e.type === 'odeme') {
+      totalOdeme += e.amount;
+      const kat = odemeKategoriOf(e);
+      if (kat === 'mesai') totalOdemeMesai += e.amount;
+      else if (kat === 'km') totalOdemeKm += e.amount;
+      else totalOdemeAlacak += e.amount;
+    }
     if (e.type === 'hesaplasma') totalHesaplasma += (e._hesaplasma || e.amount || 0);
   });
-  return { totalOdeme, totalHesaplasma, kalan: totalHesaplasma - totalOdeme };
+  return { totalOdeme, totalOdemeAlacak, totalOdemeMesai, totalOdemeKm, totalHesaplasma, kalan: totalHesaplasma - totalOdeme };
 }
 
 function renderHome() {
@@ -1959,8 +1994,11 @@ function renderEntryItemHome(e, showDate=false) {
     icon = '💸'; iconClass = ''; amtColor = 'stat-amber'; sign = '';
     badgeHtml = `<span class="badge" style="background:#fef3c7;color:var(--accent-amber)">Hesaplaşma</span>`;
   } else if (e.type === 'odeme') {
-    icon = e.kmOdeme ? '🚗' : '💳'; iconClass = ''; amtColor = 'stat-green'; sign = '+';
-    badgeHtml = e.kmOdeme ? `<span class="badge" style="background:#e0e7ff;color:#4338ca">Ödeme (Km)</span>` : `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme</span>`;
+    icon = ({mesai:'⏱️',km:'🚗'}[odemeKategoriOf(e)]) || '💳'; iconClass = ''; amtColor = 'stat-green'; sign = '+';
+    badgeHtml = ({
+      mesai: `<span class="badge" style="background:#dbeafe;color:#1d4ed8">Ödeme (Mesai) ⏱️</span>`,
+      km: `<span class="badge" style="background:#e0e7ff;color:#4338ca">Ödeme (Km) 🚗</span>`
+    }[odemeKategoriOf(e)]) || `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme</span>`;
   } else if (e.jobType === 'daily') {
     icon = '🔄'; iconClass = 'icon-daily'; amtColor = 'stat-green'; sign = '+';
     badgeHtml = '<span class="badge badge-daily">Günlük</span>';
@@ -2263,7 +2301,10 @@ function renderEntryItemEditable(e, showDate) {
   else if (e.type === 'mesai') badge = `<span class="badge badge-special">${e.mesaiHours}sa ${mesaiTypeLabels[e.mesaiType]||''}</span>`;
   else if (e.type === 'km') badge = `<span class="badge" style="background:#e0e7ff;color:#4338ca">Araç Km</span>`;
   else if (e.type === 'hesaplasma') badge = `<span class="badge" style="background:#fef3c7;color:var(--accent-amber)">Hesaplaşma</span>`;
-  else if (e.type === 'odeme') badge = e.kmOdeme ? `<span class="badge" style="background:#e0e7ff;color:#4338ca">Ödeme (Km) 🚗</span>` : `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme (Hesaplaşma Sonrası)</span>`;
+  else if (e.type === 'odeme') badge = ({
+    mesai: `<span class="badge" style="background:#dbeafe;color:#1d4ed8">Ödeme (Mesai) ⏱️</span>`,
+    km: `<span class="badge" style="background:#e0e7ff;color:#4338ca">Ödeme (Km) 🚗</span>`
+  }[odemeKategoriOf(e)]) || `<span class="badge" style="background:#e6f5ee;color:var(--accent-green)">Ödeme (Hesaplaşma Sonrası)</span>`;
   else if (e.jobType === 'daily') badge = '<span class="badge badge-daily">Günlük</span>';
   else badge = '<span class="badge badge-special">Özel</span>';
 
@@ -2476,8 +2517,180 @@ function calcRaporData(filterFn) {
   return { inc, exp, masraf, mesai, km, gun, odeme, alacak: inc + masraf, kalan: inc + masraf - exp };
 }
 
+// Haftalık hesaplaşma (sıfırlamaz) — km, ayarlardaki birim fiyat ile çarpılıp alacaklara eklenir
+function calcHaftalikData(filterFn) {
+  const d = calcRaporData(filterFn);
+  const kmRate = settings.kmRate || 0;
+  const kmTutar = (d.km || 0) * kmRate;
+  const alacakKm = d.alacak + kmTutar;
+  const kalanKm = alacakKm - d.exp;
+  return { ...d, kmRate, kmTutar, alacakKm, kalanKm };
+}
+
+// Son n haftanın listesini döndürür (settings.weekStartDay bazlı)
+function buildWeekList(n) {
+  const startDay = (settings.weekStartDay !== undefined) ? settings.weekStartDay : 5;
+  const weeks = [];
+  for (let w = 0; w < n; w++) {
+    const ref = new Date(); ref.setDate(ref.getDate() - w * 7);
+    const day = ref.getDay();
+    const diff = (day - startDay + 7) % 7;
+    const wStart = new Date(ref); wStart.setDate(ref.getDate() - diff); wStart.setHours(0,0,0,0);
+    const wEnd = new Date(wStart); wEnd.setDate(wStart.getDate() + 6);
+    const fmt = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    const fmtL = d => d.getDate() + ' ' + MONTHS_TR[d.getMonth()] + ' ' + d.getFullYear();
+    weeks.push({ start: fmt(wStart), end: fmt(wEnd), label: (w===0?'Bu Hafta — ':'')+fmtL(wStart) + ' – ' + fmtL(wEnd) });
+  }
+  const seen = new Set();
+  return weeks.filter(wk => { if (seen.has(wk.start)) return false; seen.add(wk.start); return true; });
+}
+
 function calcHesaplasmaEvents(filterFn) {
   return entries.filter(e => e.type === 'hesaplasma' && filterFn(e));
+}
+
+function pdfHaftalikHesaplasmaIndir(idx) {
+  const wk = _haftalikWeeksCache[idx];
+  if (!wk) { alert('Lütfen bir hafta seçin.'); return; }
+  const filterFn = e => e.date >= wk.start && e.date <= wk.end;
+  const d = calcHaftalikData(filterFn);
+  const filteredEntries = entries.filter(e => filterFn(e) && !e._settled && e.type !== 'hesaplasma');
+  const printDate = new Date().toLocaleDateString('tr-TR', {day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'});
+
+  function trPDF(s) {
+    if (!s) return '';
+    return String(s)
+      .replace(/ğ/g,'g').replace(/Ğ/g,'G')
+      .replace(/ü/g,'u').replace(/Ü/g,'U')
+      .replace(/ş/g,'s').replace(/Ş/g,'S')
+      .replace(/ı/g,'i').replace(/İ/g,'I')
+      .replace(/ö/g,'o').replace(/Ö/g,'O')
+      .replace(/ç/g,'c').replace(/Ç/g,'C');
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pageW = 210, margin = 14, contentW = pageW - margin * 2;
+  let y = 14;
+
+  // Başlık kutusu
+  doc.setFillColor(67, 56, 202);
+  doc.roundedRect(margin, y, contentW, 22, 3, 3, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('Ücret Takip — Haftalık Hesaplaşma'), margin + 4, y + 8);
+  doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+  doc.text(trPDF(wk.label.replace('Bu Hafta — ','') + '   |   Oluşturulma: ' + printDate), margin + 4, y + 16);
+  y += 28;
+
+  // Özet kartlar
+  const cards = [
+    { label: 'Is + Masraf Alacagi', value: '+' + fmtMoney(d.alacak), r:230,g:246,b:235, tr:13,tg:122,tb:78 },
+    { label: 'Arac Km',             value: d.km.toFixed(1) + ' km',  r:224,g:231,b:255, tr:67,tg:56,tb:202 },
+    { label: 'Km Tutari',           value: '+' + fmtMoney(d.kmTutar),r:224,g:231,b:255, tr:67,tg:56,tb:202 },
+    { label: 'Toplam Alacak (Km Dahil)', value: '+' + fmtMoney(d.alacakKm), r:219,g:234,b:254, tr:29,tg:78,tb:216 },
+    { label: 'Alinan Para',         value: '-' + fmtMoney(d.exp),    r:254,g:226,b:226, tr:185,tg:28,tb:28 },
+    { label: 'Kalan Alacak (Km Dahil)', value: (d.kalanKm>=0?'+':'') + fmtMoney(d.kalanKm), r:d.kalanKm>=0?254:254, g:d.kalanKm>=0?243:226, b:d.kalanKm>=0?199:226, tr:d.kalanKm>=0?180:185, tg:d.kalanKm>=0?83:28, tb:d.kalanKm>=0?9:28 },
+    { label: 'Mesai Suresi',        value: d.mesai.toFixed(2)+' sa', r:255,g:247,b:237, tr:180,tg:83,tb:9 },
+    { label: 'Calisilan Gun',       value: d.gun + ' gun',           r:255,g:247,b:237, tr:180,tg:83,tb:9 },
+  ];
+  const cw = (contentW - 8) / 3;
+  cards.forEach((c, i) => {
+    const cx = margin + (i % 3) * (cw + 4);
+    const cy = y + Math.floor(i / 3) * 18;
+    doc.setFillColor(c.r, c.g, c.b);
+    doc.roundedRect(cx, cy, cw, 15, 2, 2, 'F');
+    doc.setTextColor(c.tr, c.tg, c.tb);
+    doc.setFontSize(6.6); doc.setFont('helvetica', 'bold');
+    doc.text(trPDF(c.label.toUpperCase()), cx + 3, cy + 5);
+    doc.setFontSize(10); doc.setFont('helvetica', 'bold');
+    doc.text(trPDF(c.value), cx + 3, cy + 12);
+  });
+  y += Math.ceil(cards.length / 3) * 18 + 6;
+
+  if (!settings.kmRate || settings.kmRate <= 0) {
+    doc.setTextColor(185, 28, 28);
+    doc.setFontSize(8); doc.setFont('helvetica', 'italic');
+    doc.text(trPDF('Not: Km carpani (TL/km) tanimli degil, Km Tutari 0 olarak hesaplandi.'), margin + 2, y);
+    y += 7;
+  }
+
+  // Tablo başlığı
+  if (filteredEntries.length > 0) {
+    doc.setFillColor(249, 250, 251);
+    doc.rect(margin, y, contentW, 8, 'F');
+    doc.setDrawColor(229, 231, 235);
+    doc.rect(margin, y, contentW, 8, 'S');
+    doc.setTextColor(107, 114, 128);
+    doc.setFontSize(7.5); doc.setFont('helvetica', 'bold');
+    doc.text(trPDF('TARİH'), margin + 2, y + 5.5);
+    doc.text(trPDF('TÜR'), margin + 38, y + 5.5);
+    doc.text(trPDF('AÇIKLAMA'), margin + 62, y + 5.5);
+    doc.text(trPDF('TUTAR'), pageW - margin - 2, y + 5.5, { align: 'right' });
+    y += 8;
+
+    const typeLabels2 = { income:'Alacak', expense:'Alınan Para', masraf:'Masraf', mesai:'Mesai', km:'Arac Km', odeme:'Ödeme' };
+    filteredEntries.forEach((e, idx2) => {
+      if (y > 272) { doc.addPage(); y = 14; }
+      const rowH = 7;
+      if (idx2 % 2 === 0) { doc.setFillColor(248, 250, 252); doc.rect(margin, y, contentW, rowH, 'F'); }
+      doc.setDrawColor(240, 241, 243);
+      doc.line(margin, y + rowH, margin + contentW, y + rowH);
+
+      let tip = typeLabels2[e.type] || e.type;
+      if (e.type === 'odeme') {
+        const okat = odemeKategoriOf(e);
+        tip = okat === 'mesai' ? 'Mesai Odemesi' : okat === 'km' ? 'Km Odemesi' : 'Alacak Odemesi';
+      }
+      if (e.type === 'income') tip = e.jobType === 'daily' ? 'Günlük İş' : 'Özel İş';
+      let tutar;
+      if (e.type === 'mesai') tutar = (e.mesaiHours||0).toFixed(2)+' saat';
+      else if (e.type === 'km') tutar = (e.km||0).toFixed(1)+' km';
+      else if (e.type === 'expense') tutar = '-' + fmtMoney(e.amount);
+      else tutar = '+' + fmtMoney(e.amount);
+
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal');
+      doc.setTextColor(55, 65, 81);
+      const dt = new Date(e.date + 'T00:00:00');
+      const dateShort = dt.getDate() + ' ' + MONTHS_TR[dt.getMonth()] + ' ' + dt.getFullYear();
+      doc.text(trPDF(dateShort), margin + 2, y + 5);
+      doc.text(trPDF(tip), margin + 38, y + 5);
+      const descTxt = doc.splitTextToSize(e.desc || '-', 50)[0];
+      doc.text(trPDF(descTxt), margin + 62, y + 5);
+      doc.setTextColor(e.type === 'expense' ? 185 : 13, e.type === 'expense' ? 28 : 122, e.type === 'expense' ? 28 : 78);
+      doc.setFont('helvetica', 'bold');
+      doc.text(trPDF(tutar), pageW - margin - 2, y + 5, { align: 'right' });
+      y += rowH;
+    });
+  } else {
+    doc.setTextColor(156, 163, 175);
+    doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+    doc.text(trPDF('Bu haftada kayıt bulunamadı.'), pageW / 2, y + 10, { align: 'center' });
+    y += 20;
+  }
+
+  // Km Tutarı'nın alacaklara nasıl eklendiğini gösteren not kutusu
+  y += 6;
+  if (y > 258) { doc.addPage(); y = 14; }
+  doc.setFillColor(224, 231, 255);
+  doc.roundedRect(margin, y, contentW, 18, 3, 3, 'F');
+  doc.setDrawColor(165, 180, 252);
+  doc.roundedRect(margin, y, contentW, 18, 3, 3, 'S');
+  doc.setTextColor(67, 56, 202);
+  doc.setFontSize(7); doc.setFont('helvetica', 'bold');
+  doc.text(trPDF('KM TUTARI ALACAK HESABI'), margin + 4, y + 6);
+  doc.setFontSize(7.2); doc.setFont('helvetica', 'normal');
+  doc.text(trPDF(d.km.toFixed(1) + ' km  x  ' + fmtMoney(d.kmRate) + '/km  =  ' + fmtMoney(d.kmTutar) + '  (toplam alacaga eklendi)'), margin + 4, y + 13);
+  y += 24;
+
+  doc.setDrawColor(229, 231, 235);
+  doc.line(margin, y, pageW - margin, y);
+  doc.setTextColor(156, 163, 175);
+  doc.setFontSize(7); doc.setFont('helvetica', 'italic');
+  doc.text(trPDF('Bu dokum bilgilendirme amaclidir; veriler sifirlanmamistir. — ' + printDate), pageW / 2, y + 5, { align: 'center' });
+
+  const fileName = 'haftalik_hesaplasma_' + wk.start + '_' + wk.end + '.pdf';
+  doc.save(fileName);
 }
 
 function raporKartHTML(baslik, altBaslik, d, renk, hesaplasmaEvents) {
@@ -2569,12 +2782,26 @@ function renderRapor() {
           <div style="font-size:14px;font-weight:800;color:${odeKalanColor}">${fmtMoney(odemeB.kalan)}</div>
         </div>
       </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px">
+        <div style="text-align:center;padding:8px;background:rgba(255,255,255,0.7);border-radius:8px">
+          <div style="font-size:9px;color:var(--text-muted);font-weight:700;text-transform:uppercase">💼 Alacak</div>
+          <div style="font-size:13px;font-weight:800;color:var(--accent-green)">${fmtMoney(odemeB.totalOdemeAlacak)}</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:rgba(255,255,255,0.7);border-radius:8px">
+          <div style="font-size:9px;color:var(--text-muted);font-weight:700;text-transform:uppercase">⏱️ Mesai</div>
+          <div style="font-size:13px;font-weight:800;color:#1d4ed8">${fmtMoney(odemeB.totalOdemeMesai)}</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:rgba(255,255,255,0.7);border-radius:8px">
+          <div style="font-size:9px;color:var(--text-muted);font-weight:700;text-transform:uppercase">🚗 Km</div>
+          <div style="font-size:13px;font-weight:800;color:#4338ca">${fmtMoney(odemeB.totalOdemeKm)}</div>
+        </div>
+      </div>
       ${entries.filter(e=>e.type==='odeme').length > 0 ? `
       <div style="margin-top:8px;border-top:1px solid rgba(0,0,0,0.08);padding-top:8px">
         <div style="font-size:11px;font-weight:700;color:var(--accent-amber);margin-bottom:4px">📋 Ödeme Geçmişi</div>
         ${entries.filter(e=>e.type==='odeme').map(oe=>`
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:3px 0;border-bottom:1px solid rgba(0,0,0,0.06)">
-            <span style="color:var(--text-muted)">${fmtDate(oe.date)}</span>
+            <span style="color:var(--text-muted)">${({mesai:'⏱️',km:'🚗'}[odemeKategoriOf(oe)])||'💼'} ${fmtDate(oe.date)}</span>
             <span style="color:var(--text-muted);font-size:11px">${oe.desc}</span>
             <span style="font-weight:700;color:var(--accent-green)">+${fmtMoney(oe.amount)}</span>
           </div>`).join('')}
@@ -2758,6 +2985,22 @@ function renderHesaplasma() {
     <div class="detail-row"><span class="detail-row-label">📅 Toplam Çalışılan Gün</span><span class="detail-row-val stat-amber">${allGun} gün</span></div>
   </div>`;
 
+  // Haftalık Hesaplaşma — sıfırlamaz, sadece bilgilendirme + PDF amaçlı; km, çarpan ile alacaklara eklenir
+  _haftalikWeeksCache = buildWeekList(10);
+  html += `<div class="card" style="border:1.5px solid #818cf8;margin-bottom:12px;background:linear-gradient(135deg,#eef2ff,#e0e7ff)">
+    <div class="card-title" style="color:#4338ca">📅 Haftalık Hesaplaşma</div>
+    <p style="font-size:12.5px;color:var(--text-muted);margin:0 0 10px 0;line-height:1.6">
+      Bu bölüm <strong>toplamları sıfırlamaz</strong> — sadece seçtiğiniz haftanın özetini km çarpanı ile birlikte gösterir ve PDF olarak çıkartır.
+    </p>
+    <div class="form-group" style="margin-bottom:10px">
+      <select id="haftalik-hafta-sel" onchange="updateHaftalikBox()" style="width:100%">
+        ${_haftalikWeeksCache.map((wk,i) => `<option value="${i}">${wk.label}</option>`).join('')}
+      </select>
+    </div>
+    <div id="haftalik-box-content"></div>
+  </div>`;
+
+
   // Ödeme bakiyesi
   const odeme = calcOdemeBakiyesi();
   const hasAnyHesaplasma = entries.some(e => e.type === 'hesaplasma');
@@ -2771,12 +3014,26 @@ function renderHesaplasma() {
       <div class="detail-row"><span class="detail-row-label">💸 Toplam Hesaplaşılan</span><span class="detail-row-val" style="color:var(--accent-amber);font-weight:800">${fmtMoney(odeme.totalHesaplasma)}</span></div>
       <div class="detail-row"><span class="detail-row-label">✅ Toplam Ödenen</span><span class="detail-row-val stat-green">${fmtMoney(odeme.totalOdeme)}</span></div>
       <div class="detail-row"><span class="detail-row-label">⏳ Kalan Borç</span><span class="detail-row-val" style="color:${odeKalanColor};font-weight:800">${fmtMoney(odeme.kalan)}</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:8px">
+        <div style="text-align:center;padding:8px;background:rgba(255,255,255,0.7);border-radius:8px">
+          <div style="font-size:9px;color:var(--text-muted);font-weight:700;text-transform:uppercase">💼 Alacak</div>
+          <div style="font-size:13px;font-weight:800;color:var(--accent-green)">${fmtMoney(odeme.totalOdemeAlacak)}</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:rgba(255,255,255,0.7);border-radius:8px">
+          <div style="font-size:9px;color:var(--text-muted);font-weight:700;text-transform:uppercase">⏱️ Mesai</div>
+          <div style="font-size:13px;font-weight:800;color:#1d4ed8">${fmtMoney(odeme.totalOdemeMesai)}</div>
+        </div>
+        <div style="text-align:center;padding:8px;background:rgba(255,255,255,0.7);border-radius:8px">
+          <div style="font-size:9px;color:var(--text-muted);font-weight:700;text-transform:uppercase">🚗 Km</div>
+          <div style="font-size:13px;font-weight:800;color:#4338ca">${fmtMoney(odeme.totalOdemeKm)}</div>
+        </div>
+      </div>
       ${entries.filter(e=>e.type==='odeme').length > 0 ? `
       <div style="margin-top:8px;border-top:1px solid rgba(0,0,0,0.08);padding-top:8px">
         <div style="font-size:11px;font-weight:700;color:var(--accent-amber);margin-bottom:6px">📋 Ödeme Geçmişi</div>
         ${entries.filter(e=>e.type==='odeme').map(oe=>`
           <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:4px 0;border-bottom:1px solid rgba(0,0,0,0.06)">
-            <span style="color:var(--text-muted)">${fmtDate(oe.date)}</span>
+            <span style="color:var(--text-muted)">${({mesai:'⏱️',km:'🚗'}[odemeKategoriOf(oe)])||'💼'} ${fmtDate(oe.date)}</span>
             <span style="color:var(--text-muted);font-size:11px;flex:1;margin:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${oe.desc}</span>
             <span style="font-weight:700;color:var(--accent-green)">+${fmtMoney(oe.amount)}</span>
             <button onclick="deleteEntry(${oe.id})" style="background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:14px;margin-left:6px">✕</button>
@@ -2789,23 +3046,71 @@ function renderHesaplasma() {
   html += `<div class="card" style="border:1.5px solid var(--accent-amber);margin-bottom:12px">
     <div class="card-title" style="color:var(--accent-amber)">💸 Hesaplaşma Yap</div>
     <p style="font-size:13px;color:var(--text-muted);margin:0 0 14px 0;line-height:1.6">
-      Hesaplaşma yaptığınızda <strong>tüm veriler silinmez</strong>, sadece tutarlar sıfırlanır ve mesai saatleri de temizlenir.
+      Hesaplaşma yaptığınızda <strong>tüm veriler silinmez</strong>, sadece tutarlar sıfırlanır; mesai saatleri ve araç km bilgileri de temizlenir.
     </p>
     <div style="background:var(--bg-card-alt,var(--border));border-radius:10px;padding:12px;margin-bottom:14px">
       <div style="font-size:13px;color:var(--text-muted);margin-bottom:4px">Hesaplaşılacak toplam (iş + masraf):</div>
       <div style="font-size:22px;font-weight:800;color:${allKalan>=0?'var(--accent-green)':'var(--accent-red)'}">${fmtMoney(allKalan)}</div>
     </div>
-    ${allKalan === 0 && allMesai === 0
+    ${allKalan === 0 && allMesai === 0 && allKm === 0
       ? `<div style="color:var(--text-muted);font-size:13px;text-align:center;padding:4px 0">✅ Hesap tamamen kapanmış.</div>`
       : `<button class="btn btn-primary" style="background:var(--accent-amber);width:100%;font-size:15px;padding:14px" onclick="doHesaplasma(${allKalan})">💸 Hesaplaşmayı Tamamla</button>`
     }
   </div>`;
 
   document.getElementById('hesaplasma-content').innerHTML = html;
+  updateHaftalikBox();
+}
+
+function updateHaftalikBox() {
+  const sel = document.getElementById('haftalik-hafta-sel');
+  const box = document.getElementById('haftalik-box-content');
+  if (!sel || !box) return;
+  const idx = parseInt(sel.value) || 0;
+  const wk = _haftalikWeeksCache[idx];
+  if (!wk) return;
+  const d = calcHaftalikData(e => e.date >= wk.start && e.date <= wk.end);
+
+  let html = '';
+  if (!settings.kmRate || settings.kmRate <= 0) {
+    html += `<div style="background:#fef3c7;border:1.5px solid #fbbf24;border-radius:10px;padding:10px;margin-bottom:10px">
+      <div style="font-size:12.5px;color:#92400e;font-weight:700;margin-bottom:6px">🚗 Km çarpanı tanımlı değil — km tutarı hesaplanamıyor</div>
+      <div style="display:flex;gap:6px;align-items:stretch">
+        <input type="number" id="haftalik-km-rate-inline" inputmode="decimal" step="0.01" placeholder="₺ / km" style="flex:1;min-width:0;padding:8px;border-radius:8px;border:1.5px solid #fbbf24;font-size:14px">
+        <button class="btn btn-primary" style="width:auto;flex:0 0 auto;padding:8px 14px;font-size:13px" onclick="saveHaftalikKmRate()">Kaydet</button>
+      </div>
+    </div>`;
+  }
+
+  html += `
+    <div class="detail-row"><span class="detail-row-label">💼 İş + Masraf Alacağı</span><span class="detail-row-val stat-green">${fmtMoney(d.alacak)}</span></div>
+    <div class="detail-row"><span class="detail-row-label">🚗 Araç Km</span><span class="detail-row-val stat-blue">${d.km.toFixed(1)} km</span></div>
+    <div class="detail-row"><span class="detail-row-label">🚗 Km Tutarı (${fmtMoney(d.kmRate)}/km)</span><span class="detail-row-val" style="color:#4338ca;font-weight:700">${fmtMoney(d.kmTutar)}</span></div>
+    <div class="detail-row" style="border-top:1.5px solid rgba(67,56,202,0.25);padding-top:8px;margin-top:4px">
+      <span class="detail-row-label" style="font-weight:800">💰 Toplam Alacak (Km Dahil)</span>
+      <span class="detail-row-val" style="color:#4338ca;font-weight:800">${fmtMoney(d.alacakKm)}</span>
+    </div>
+    <div class="detail-row"><span class="detail-row-label">💵 Alınan Para</span><span class="detail-row-val stat-red">${fmtMoney(d.exp)}</span></div>
+    <div class="detail-row"><span class="detail-row-label">⚖️ Kalan Alacak (Km Dahil)</span><span class="detail-row-val" style="color:${d.kalanKm>=0?'var(--accent-green)':'var(--accent-red)'};font-weight:800">${fmtMoney(d.kalanKm)}</span></div>
+    <div class="detail-row"><span class="detail-row-label">⏱️ Mesai Saati</span><span class="detail-row-val stat-blue">${d.mesai.toFixed(2)} saat</span></div>
+    <div class="detail-row"><span class="detail-row-label">📅 Çalışılan Gün</span><span class="detail-row-val stat-amber">${d.gun} gün</span></div>
+    <button class="btn btn-primary" style="background:#4338ca;width:100%;font-size:14px;padding:12px;margin-top:10px" onclick="pdfHaftalikHesaplasmaIndir(${idx})">📄 Haftalık Hesaplaşma PDF</button>
+  `;
+  box.innerHTML = html;
+}
+
+function saveHaftalikKmRate() {
+  const inp = document.getElementById('haftalik-km-rate-inline');
+  if (!inp) return;
+  const v = parseFloat(inp.value);
+  if (isNaN(v) || v < 0) { alert('Geçerli bir km çarpanı girin.'); return; }
+  settings.kmRate = v;
+  save();
+  updateHaftalikBox();
 }
 
 function doHesaplasma(tutar) {
-  if (!confirm(`Hesaplaşma yapılacak.\n\nKalan alacak: ₺${tutar.toFixed(2)}\n\nVeriler silinmeyecek; income, expense, masraf ve mesai kayıtları kapatılacak.\n\nDevam etmek istiyor musunuz?`)) return;
+  if (!confirm(`Hesaplaşma yapılacak.\n\nKalan alacak: ₺${tutar.toFixed(2)}\n\nVeriler silinmeyecek; income, expense, masraf, mesai ve km kayıtları kapatılacak.\n\nDevam etmek istiyor musunuz?`)) return;
 
   const hesaplasmaEntry = {
     id: Date.now(),
@@ -2816,9 +3121,9 @@ function doHesaplasma(tutar) {
     _hesaplasma: tutar
   };
 
-  // income, expense, masraf ve mesai entry'lerini settled yap
+  // income, expense, masraf, mesai ve km entry'lerini settled yap
   entries.forEach(e => {
-    if (['income', 'expense', 'masraf', 'mesai'].includes(e.type)) {
+    if (['income', 'expense', 'masraf', 'mesai', 'km'].includes(e.type)) {
       e._settled = true;
     }
   });
@@ -2827,7 +3132,7 @@ function doHesaplasma(tutar) {
   entries.sort((a,b) => b.date.localeCompare(a.date) || b.id - a.id);
   save();
 
-  alert('✅ Hesaplaşma tamamlandı! Bakiye, masraf ve mesai saatleri sıfırlandı.\n\nHesaplaşılan tutar Ödeme Bakiyesi\'ne eklendi. Aldığınız ödemeleri "Ödeme Ekle" butonu ile kaydedin.');
+  alert('✅ Hesaplaşma tamamlandı! Bakiye, masraf, mesai saatleri ve araç km bilgileri sıfırlandı.\n\nHesaplaşılan tutar Ödeme Bakiyesi\'ne eklendi. Aldığınız ödemeleri "Ödeme Ekle" butonu ile kaydedin.');
   renderHesaplasma();
   renderHome();
 }
@@ -3029,6 +3334,7 @@ function showBackupMsg(msg, color) {
 // === SETTINGS ===
 function initSettings() {
   document.getElementById('daily-rate-input').value = settings.dailyRate || '';
+  document.getElementById('km-rate-input').value = settings.kmRate || '';
   // Hafta başı chip'lerini oluştur
   const days = [
     {v:1,l:'Pzt'},{v:2,l:'Sal'},{v:3,l:'Çar'},{v:4,l:'Per'},
@@ -3062,6 +3368,9 @@ function saveSettings() {
   const rate = parseFloat(document.getElementById('daily-rate-input').value);
   if (isNaN(rate) || rate < 0) { alert('Geçerli bir ücret girin.'); return; }
   settings.dailyRate = rate;
+  const kmRateRaw = document.getElementById('km-rate-input').value;
+  const kmRate = kmRateRaw === '' ? 0 : parseFloat(kmRateRaw);
+  settings.kmRate = (isNaN(kmRate) || kmRate < 0) ? 0 : kmRate;
   if (settings.weekStartDay === undefined) settings.weekStartDay = 5;
   save();
   const btn = document.querySelector('#page-settings .btn-primary');
